@@ -35,11 +35,11 @@ struct refcount {
 
 typedef struct refcount refcount;
 
-/*
-extern void *rc_alloc(size_t size, void (*delete_func)(void *data));
-extern void *rc_inc(void *data);
-extern int rc_dec(void *data);
-*/
+
+extern void *rc_alloc(int size, void (*delete_func)(void *data));
+extern void *rc_inc(const void *data);
+extern void *rc_dec(const void *data);
+
 
 
 extern refcount refcount_init(int count, void *data, void (*delete_func)(void *data));
