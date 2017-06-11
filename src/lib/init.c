@@ -24,6 +24,7 @@
 #include <platform.h>
 #include <util/attr.h>
 #include <util/debug.h>
+#include <util/pt.h>
 #include <ab/ab.h>
 #include <system/system.h>
 #include <lib/init.h>
@@ -33,7 +34,7 @@
  * The version string.
  */
 
-const char *VERSION="2.0.2";
+const char *VERSION="2.0.3";
 
 
 
@@ -134,6 +135,8 @@ void destroy_modules(void)
 {
     ab_teardown();
 
+    pt_teardown();
+
     lib_teardown();
 }
 
@@ -160,7 +163,15 @@ int initialize_modules(void)
         rc = lib_init();
 
         if(rc == PLCTAG_STATUS_OK) {
+            rc = pt_init();
+        } else {
+            pdebug(DEBUG_ERROR,"Protothread utility failed to initialize correctly!");
+        }
+
+        if(rc == PLCTAG_STATUS_OK) {
             rc = ab_init();
+        } else {
+            pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
         }
 
         library_initialized = 1;
