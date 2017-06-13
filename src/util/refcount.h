@@ -24,7 +24,7 @@
 
 #include <platform.h>
 
-
+/*
 struct refcount {
     int count;
     lock_t lock;
@@ -34,18 +34,20 @@ struct refcount {
 
 
 typedef struct refcount refcount;
+*/
 
-
-extern void *rc_alloc(int size, void (*delete_func)(void *data));
+extern void *rc_alloc(int size, void (*cleanup_func)(void *data));
 extern void *rc_inc(const void *data);
 extern void *rc_dec(const void *data);
+extern void rc_free(const void *data);
+extern int rc_count(const void *data);
 
 
-
+/*
 extern refcount refcount_init(int count, void *data, void (*delete_func)(void *data));
 extern int refcount_acquire(refcount *rc);
 extern int refcount_release(refcount *rc);
 extern int refcount_get_count(refcount *rc);
-
+*/
 
 #endif

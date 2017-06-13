@@ -51,7 +51,7 @@
 /* how long to wait for session registration before timing out. In milliseconds. */
 #define SESSION_REGISTRATION_TIMEOUT (1500)
 
-/* 
+/*
  * the queue depth depends on the type of the request.
  */
 
@@ -109,7 +109,7 @@ struct ab_session_t {
     ab_tag_p tags;
 
     /* ref count for session */
-    refcount rc;
+    //refcount rc;
 
     /* connections for this session */
     ab_connection_p connections;
@@ -129,8 +129,8 @@ extern int session_add_request_unsafe(ab_session_p sess, ab_request_p req);
 extern int session_add_request(ab_session_p sess, ab_request_p req);
 extern int session_remove_request_unsafe(ab_session_p sess, ab_request_p req);
 extern int session_remove_request(ab_session_p sess, ab_request_p req);
-extern int session_acquire(ab_session_p session);
-extern int session_release(ab_session_p session);
+//extern int session_acquire(ab_session_p session);
+//extern int session_release(ab_session_p session);
 
 
 #endif

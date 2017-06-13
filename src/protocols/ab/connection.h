@@ -79,7 +79,7 @@ struct ab_connection_t {
     //uint16_t seq_in_flight[CONNECTION_MAX_IN_FLIGHT];
 
     /* maintain a ref count. */
-    refcount rc;
+    //refcount rc;
 
     /* list of tags that belong to this connection */
     //ab_tag_p tags;
@@ -89,8 +89,8 @@ struct ab_connection_t {
 
 extern int connection_find_or_create(ab_tag_p tag, attr attribs);
 //extern int connection_acquire(ab_connection_p connection);
-extern int connection_acquire(ab_connection_p connection);
-extern int connection_release(ab_connection_p connection);
+//extern int connection_acquire(ab_connection_p connection);
+//extern int connection_release(ab_connection_p connection);
 
 
 

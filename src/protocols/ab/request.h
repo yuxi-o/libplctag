@@ -61,7 +61,7 @@ struct ab_request_t {
     int processed;
 
     /* reference count information */
-    refcount rc;
+    //refcount rc;
 
     ab_session_p session;
     ab_connection_p connection;
@@ -88,8 +88,8 @@ struct ab_request_t {
 
 
 int request_create(ab_request_p *req);
-int request_acquire(ab_request_p req);
-int request_release(ab_request_p req);
+//int request_acquire(ab_request_p req);
+//int request_release(ab_request_p req);
 //~ int request_destroy_unsafe(ab_request_p* req_pp);
 //~ int request_destroy(ab_request_p *req);
 

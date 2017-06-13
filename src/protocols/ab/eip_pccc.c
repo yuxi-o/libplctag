@@ -225,8 +225,7 @@ int eip_pccc_tag_read_start(ab_tag_p tag)
 
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR, "Unable to add request to session! rc=%d", rc);
-        request_release(req);
-        tag->reqs[0] = NULL;
+        tag->reqs[0] = rc_dec(req);
         return rc;
     }
 
@@ -344,9 +343,7 @@ static int check_read_status(ab_tag_p tag)
     } while(0);
 
     /* clean up the request */
-    //session_remove_request(tag->session, req);
-    request_release(req);
-    tag->reqs[0] = NULL;
+    tag->reqs[0] = rc_dec(req);
 
     tag->read_in_progress = 0;
 
@@ -433,8 +430,7 @@ int eip_pccc_tag_write_start(ab_tag_p tag)
     /* What type and size do we have? */
     if(tag->elem_size != 2 && tag->elem_size != 4) {
         pdebug(DEBUG_WARN,"Unsupported data type size: %d",tag->elem_size);
-        //~ request_destroy(&req);
-        request_release(req);
+        rc_dec(req);
         return PLCTAG_ERR_NOT_ALLOWED;
     }
 
@@ -448,15 +444,13 @@ int eip_pccc_tag_write_start(ab_tag_p tag)
      */
     if(!(element_def_size = pccc_encode_dt_byte(element_def,sizeof(element_def),pccc_data_type,tag->elem_size))) {
         pdebug(DEBUG_WARN,"Unable to encode PCCC request array element data type and size fields!");
-        //~ request_destroy(&req);
-        request_release(req);
+        rc_dec(req);
         return PLCTAG_ERR_ENCODE;
     }
 
     if(!(array_def_size = pccc_encode_dt_byte(array_def,sizeof(array_def),AB_PCCC_DATA_ARRAY,element_def_size + tag->size))) {
         pdebug(DEBUG_WARN,"Unable to encode PCCC request data type and size fields!");
-        //~ request_destroy(&req);
-        request_release(req);
+        rc_dec(req);
         return PLCTAG_ERR_ENCODE;
     }
 
@@ -523,8 +517,7 @@ int eip_pccc_tag_write_start(ab_tag_p tag)
 
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR, "Unable to add request to session! rc=%d", rc);
-        request_release(req);
-        tag->reqs[0] = NULL;
+        tag->reqs[0] = rc_dec(req);
         return rc;
    }
 
@@ -604,9 +597,7 @@ static int check_write_status(ab_tag_p tag)
     } while(0);
 
     /* clean up the request */
-    //session_remove_request(tag->session, req);
-    request_release(req);
-    tag->reqs[0] = NULL;
+    tag->reqs[0] = rc_dec(req);
 
     tag->write_in_progress = 0;
 

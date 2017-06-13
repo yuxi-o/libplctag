@@ -63,8 +63,8 @@ static int recv_forward_open_resp(ab_connection_p connection, ab_request_p req);
 //~ static int connection_remove_tag(ab_connection_p connection, ab_tag_p tag);
 //~ static int connection_empty_unsafe(ab_connection_p connection);
 //~ static int connection_is_empty(ab_connection_p connection);
-//static int connection_destroy_unsafe(ab_connection_p connection);
-static void connection_destroy(void *connection);
+//static int connection_cleanup_unsafe(ab_connection_p connection);
+static void connection_cleanup(void *connection);
 static int connection_close(ab_connection_p connection);
 static int send_forward_close_req(ab_connection_p connection, ab_request_p req);
 static int recv_forward_close_resp(ab_connection_p connection, ab_request_p req);
@@ -134,7 +134,7 @@ int connection_find_or_create(ab_tag_p tag, attr attribs)
     return rc;
 }
 
-
+/*
 int connection_acquire(ab_connection_p connection)
 {
     if(!connection) {
@@ -156,7 +156,7 @@ int connection_release(ab_connection_p connection)
 
     return refcount_release(&connection->rc);
 }
-
+*/
 
 
 
@@ -172,7 +172,7 @@ int connection_release(ab_connection_p connection)
 /* not thread safe! */
 ab_connection_p connection_create_unsafe(const char* path, ab_tag_p tag, int shared)
 {
-    ab_connection_p connection = (ab_connection_p)mem_alloc(sizeof(struct ab_connection_t));
+    ab_connection_p connection = rc_alloc(sizeof(struct ab_connection_t), connection_cleanup);
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -186,9 +186,6 @@ ab_connection_p connection_create_unsafe(const char* path, ab_tag_p tag, int sha
     connection->orig_connection_id = ++(connection->session->conn_serial_number);
     connection->status = PLCTAG_STATUS_PENDING;
     connection->exclusive = !shared;
-
-    /* connection is going to be referenced, so set refcount up. */
-    connection->rc = refcount_init(1, connection, connection_destroy);
 
     /* copy the path for later */
     str_copy(&connection->path[0], MAX_CONN_PATH, path);
@@ -226,7 +223,7 @@ ab_connection_p connection_create_unsafe(const char* path, ab_tag_p tag, int sha
 
     /* add the connection to the session */
     /* FIXME - these could fail! */
-    session_acquire(connection->session);
+    connection->session = rc_inc(connection->session);
     session_add_connection_unsafe(connection->session, connection);
 
     pdebug(DEBUG_INFO, "Done.");
@@ -287,10 +284,9 @@ int connection_perform_forward_open(ab_connection_p connection)
 
     connection->status = rc;
 
+    /* clean up the request */
     if(req) {
-        //session_remove_request(connection->session,req);
-        request_release(req);
-        //request_destroy(&req);
+        req = rc_dec(req);
     }
 
     pdebug(DEBUG_INFO, "Done.");
@@ -428,7 +424,7 @@ int recv_forward_open_resp(ab_connection_p connection, ab_request_p req)
 
 
 
-void connection_destroy(void *connection_arg)
+void connection_cleanup(void *connection_arg)
 {
     ab_connection_p connection = connection_arg;
     int really_destroy = 1;
@@ -440,16 +436,6 @@ void connection_destroy(void *connection_arg)
         return;
     }
 
-    /* do not destroy the connection if there are
-     * connections still */
-
-    /* removed due to refcount code
-    if (connection->tags) {
-        pdebug(DEBUG_WARN, "Attempt to destroy connection while open tags exist!");
-        return 0;
-    }
-    */
-
     /*
      * This needs to be done carefully.  We can have a race condition here.
      *
@@ -458,7 +444,7 @@ void connection_destroy(void *connection_arg)
      * reference and thus cannot delete this connection yet.
      */
     critical_block(global_session_mut) {
-        if(refcount_get_count(&connection->rc) > 0) {
+        if(rc_count(connection) > 0) {
             pdebug(DEBUG_WARN,"Some other thread took a reference to this connection before we could delete it.  Aborting deletion.");
             really_destroy = 0;
             break;
@@ -474,10 +460,10 @@ void connection_destroy(void *connection_arg)
         /* clean up connection with the PLC, ignore return code, we can't do anything about it. */
         connection_close(connection);
 
-        session_release(connection->session);
+        connection->session = rc_dec(connection->session);
 
         /* do final clean up */
-        mem_free(connection);
+        rc_free(connection);
     }
 
     pdebug(DEBUG_INFO, "Done.");
@@ -485,20 +471,6 @@ void connection_destroy(void *connection_arg)
     return;
 }
 
-/*
- * This should never be called directly.  It should only be called
- * as a result of the reference count hitting zero.
- */
-/* not called due to refcount code
-void connection_destroy(void conn_arg)
-{
-    ab_connection_p connection = conn_arg;
-
-    critical_block(global_session_mut) {
-        connection_destroy_unsafe(connection);
-    }
-}
-*/
 
 int connection_close(ab_connection_p connection)
 {
@@ -553,8 +525,7 @@ int connection_close(ab_connection_p connection)
     connection->status = rc;
 
     if(req) {
-        //session_remove_request(connection->session,req);
-        request_release(req);
+        req = rc_dec(req);
     }
 
     pdebug(DEBUG_INFO, "Done.");

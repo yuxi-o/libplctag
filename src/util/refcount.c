@@ -60,7 +60,7 @@ struct rc {
  * Allocate memory, replacing mem_alloc, and prepend reference counting data to the
  * memory block.
  *
- * The clean up function must NOT free the passed data.   This will be a pointer into
+ * The clean up function must free the passed data using rc_free.   This will be a pointer into
  * the middle of a malloc'ed block of memory.
  */
 
@@ -129,10 +129,9 @@ void *rc_inc(const void *data)
  * This is for usage like:
  * my_struct->some_field = rc_dec(rc_obj);
  *
- * Note that the clean up function must _NOT_ free the data pointer
+ * Note that the clean up function _MUST_ free the data pointer
  * passed to it.   It must clean up anything referenced by that data,
- * but not the block itself.  That will happen here after the clean up
- * function is called.
+ * and the block itself using rc_free();
  */
 
 void *rc_dec(const void *data)
@@ -172,103 +171,53 @@ void *rc_dec(const void *data)
     pdebug(DEBUG_DETAIL,"Refcount is now %d", count);
 
     if(count <= 0) {
-        pdebug(DEBUG_DETAIL,"Calling destructor function.");
+        pdebug(DEBUG_DETAIL,"Calling cleanup function.");
 
         rc->cleanup_func((void *)data);
-
-        mem_free(rc);
     }
 
     return NULL;
 }
 
 
-
-
-
-
-refcount refcount_init(int count, void *data, void (*delete_func)(void *data))
+void rc_free(const void *data)
 {
-    refcount rc;
+    struct rc *rc = NULL;
 
-    pdebug(DEBUG_INFO, "Initializing refcount struct with count=%d", count);
-
-    rc.count = count;
-    rc.lock = LOCK_INIT;
-    rc.data = data;
-    rc.delete_func = delete_func;
-
-    return rc;
-}
-
-/* must be called with a mutex held! */
-int refcount_acquire(refcount *rc)
-{
-    int count;
-
-    if(!rc) {
-        return PLCTAG_ERR_NULL_PTR;
+    if(!data) {
+        pdebug(DEBUG_WARN,"Null pointer passed!");
+        return;
     }
 
-    /* loop until we get the lock */
-    while (!lock_acquire(&rc->lock)) {
-        ; /* do nothing, just spin */
-    }
+    /*
+     * The struct rc we want is before the memory pointer we get.
+     * Thus we cast and subtract.
+     *
+     * This gets rid of the "const" part!
+     */
+    rc = ((struct rc *)data) - 1;
 
-    rc->count++;
-    count = rc->count;
-
-    /* release the lock so that other things can get to it. */
-    lock_release(&rc->lock);
-
-    pdebug(DEBUG_INFO,"Ref count is now %d",count);
-
-    return count;
+    mem_free(rc);
 }
 
 
-int refcount_release(refcount *rc)
+int rc_count(const void *data)
 {
-    int count;
+   struct rc *rc = NULL;
+    int count = 0;
 
-    if(!rc) {
-        return PLCTAG_ERR_NULL_PTR;
+    if(!data) {
+        pdebug(DEBUG_WARN,"Null pointer passed!");
+        return count;
     }
 
-    /* loop until we get the lock */
-    while (!lock_acquire(&rc->lock)) {
-        ; /* do nothing, just spin */
-    }
-
-    rc->count--;
-
-    if(rc->count < 0) {
-        rc->count = 0;
-    }
-
-    count = rc->count;
-
-    /* release the lock so that other things can get to it. */
-    lock_release(&rc->lock);
-
-    pdebug(DEBUG_INFO,"Refcount is now %d", count);
-
-    if(count <= 0) {
-        pdebug(DEBUG_INFO,"Calling clean up function.");
-
-        rc->delete_func(rc->data);
-    }
-
-    return count;
-}
-
-int refcount_get_count(refcount *rc)
-{
-    int count;
-
-    if(!rc) {
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    /*
+     * The struct rc we want is before the memory pointer we get.
+     * Thus we cast and subtract.
+     *
+     * This gets rid of the "const" part!
+     */
+    rc = ((struct rc *)data) - 1;
 
     /* loop until we get the lock */
     while (!lock_acquire(&rc->lock)) {
@@ -280,6 +229,123 @@ int refcount_get_count(refcount *rc)
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
 
+    pdebug(DEBUG_DETAIL,"Refcount is %d", count);
+
     return count;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//refcount refcount_init(int count, void *data, void (*delete_func)(void *data))
+//{
+    //refcount rc;
+
+    //pdebug(DEBUG_INFO, "Initializing refcount struct with count=%d", count);
+
+    //rc.count = count;
+    //rc.lock = LOCK_INIT;
+    //rc.data = data;
+    //rc.delete_func = delete_func;
+
+    //return rc;
+//}
+
+///* must be called with a mutex held! */
+//int refcount_acquire(refcount *rc)
+//{
+    //int count;
+
+    //if(!rc) {
+        //return PLCTAG_ERR_NULL_PTR;
+    //}
+
+    ///* loop until we get the lock */
+    //while (!lock_acquire(&rc->lock)) {
+        //; /* do nothing, just spin */
+    //}
+
+    //rc->count++;
+    //count = rc->count;
+
+    ///* release the lock so that other things can get to it. */
+    //lock_release(&rc->lock);
+
+    //pdebug(DEBUG_INFO,"Ref count is now %d",count);
+
+    //return count;
+//}
+
+
+//int refcount_release(refcount *rc)
+//{
+    //int count;
+
+    //if(!rc) {
+        //return PLCTAG_ERR_NULL_PTR;
+    //}
+
+    ///* loop until we get the lock */
+    //while (!lock_acquire(&rc->lock)) {
+        //; /* do nothing, just spin */
+    //}
+
+    //rc->count--;
+
+    //if(rc->count < 0) {
+        //rc->count = 0;
+    //}
+
+    //count = rc->count;
+
+    ///* release the lock so that other things can get to it. */
+    //lock_release(&rc->lock);
+
+    //pdebug(DEBUG_INFO,"Refcount is now %d", count);
+
+    //if(count <= 0) {
+        //pdebug(DEBUG_INFO,"Calling clean up function.");
+
+        //rc->delete_func(rc->data);
+    //}
+
+    //return count;
+//}
+
+//int refcount_get_count(refcount *rc)
+//{
+    //int count;
+
+    //if(!rc) {
+        //return PLCTAG_ERR_NULL_PTR;
+    //}
+
+    ///* loop until we get the lock */
+    //while (!lock_acquire(&rc->lock)) {
+        //; /* do nothing, just spin */
+    //}
+
+    //count = rc->count;
+
+    ///* release the lock so that other things can get to it. */
+    //lock_release(&rc->lock);
+
+    //return count;
+//}
 

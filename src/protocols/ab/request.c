@@ -33,7 +33,7 @@
 #include <util/debug.h>
 #include <util/refcount.h>
 
-void request_destroy(void *request_arg);
+void request_cleanup(void *request_arg);
 
 /*
  * request_create
@@ -48,14 +48,13 @@ int request_create(ab_request_p* req)
     int rc = PLCTAG_STATUS_OK;
     ab_request_p res;
 
-    res = (ab_request_p)mem_alloc(sizeof(struct ab_request_t));
+    res = rc_alloc(sizeof(struct ab_request_t), request_cleanup);
 
     if (!res) {
         *req = NULL;
         rc = PLCTAG_ERR_NO_MEM;
     } else {
-        res->rc = refcount_init(1, res, request_destroy);
-
+        /* FIXME - make these defines */
         res->num_retries_left = 5; /* MAGIC */
         res->retry_interval = 900; /* MAGIC */
 
@@ -65,7 +64,7 @@ int request_create(ab_request_p* req)
     return rc;
 }
 
-
+/*
 int request_acquire(ab_request_p req)
 {
     if(!req) {
@@ -88,33 +87,25 @@ int request_release(ab_request_p req)
 
     return refcount_release(&req->rc);
 }
-
+*/
 
 /*
- * request_destroy
+ * request_cleanup
  *
  * The request must be removed from any lists before this!
  */
-//int request_destroy_unsafe(ab_request_p* req_pp)
-void request_destroy(void *req_arg)
+
+void request_cleanup(void *req_arg)
 {
     ab_request_p r = req_arg;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
     if(r) {
-        //r = *req_pp;
-
-        /* debug = r->debug; */
-
-        //session_remove_request_unsafe(r->session, r);
-        mem_free(r);
-        //*req_pp = NULL;
+        rc_free(r);
     }
 
     pdebug(DEBUG_DETAIL, "Done.");
-
-    //~ return PLCTAG_STATUS_OK;
 }
 
 
