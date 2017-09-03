@@ -5,6 +5,7 @@
 */*~
 */*/*~
 #Visual Studio files
+build_win/*
 *.[Oo]bj
 *.user
 *.aps
