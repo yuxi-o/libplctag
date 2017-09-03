@@ -84,7 +84,23 @@ you do not need to do that step.
 
 ## Install MS Visual Studio
 
-Testing was done using Visual Studio Community Edition 2015 on Windows 7 SP1 (not terribly up to date).
+Testing was done using Visual Studio Community Edition 2015 on Windows 7 SP1 (not terribly up to date) and Windows 10 Home on a tablet PC.
+
+User "historicbruno" sent in these corrections (read these first):
+
+* It seems all versions of Visual Studio 2015 and newer don't include C++ compilers unless you choose the option, it's not only an Express edition or download limitation. I had to modify the installation, since I originally missed that.
+* cmake-gui definitely works and I prefer it to the command line on Windows as well :) You only need to do the following after installing CMake:
+..* Open cmake-gui
+..* For "Where is the source code" choose the project root directory, i.e. where CMakeLists.txt is located
+..* For "Where to build the binaries" choose a build folder inside of that directory, or anywhere else
+..* Press Configure
+..* Choose your desired version of Visual Studio from the list, and press Finish
+..* You can set CMAKE_INSTALL_PREFIX to a different folder, recommended because the default isn't writable (only needed if you build the Install project in VS, which is nice for organization)
+..* Press Generate
+..* There is now an Open Project button, so you can open the project automatically in the correct version of Visual Studio
+* It was not necessary to run the developer command prompt, in my testing. This is with a default installation of the latest CMake, and VS 2015 Community Edition on Windows 10. I think this simplifies the instructions a bit.
+
+
 
 __WARNING__ Microsoft Visual Studio versions earlier than 2013 do not support C99!  There are C99 constructs in the code.  If you have Visual Studio
 2012 or earlier, the code will not compile!
@@ -97,7 +113,7 @@ Install the compilers first!  CMake gets unhappy when it cannot find the compile
 
 ## Install CMake for Windows
 
-Go to the cmake web site and download the installer.  Install cmake.  __NOTE__ install CMake so that it is usable either by all users or the current user.  The default is to 
+Go to the cmake web site and download the installer.  Install cmake.  __NOTE__ install CMake so that it is usable either by all users or the current user.  The default is to
 not install it directly for any user! (Thanks to Nate Miller for pointing this out!)
 
 ## Install Git
@@ -151,8 +167,7 @@ If you get an error about ucrtbased.dll missing, look here:
 
 The last response in that thread shows a DLL to copy.  At least on my Win7 system, this worked fine.
 
-I only have Windows 7.  If you find that these instructions are wrong for Windows 10, please let me know what does work!
-
+If you find that these instructions are wrong for Windows 10, please let me know what does work!
 
 # Instructions for Windows with MINGW or similar
 
