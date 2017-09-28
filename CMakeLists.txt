@@ -157,6 +157,8 @@ set ( libplctag_SRCS "${lib_SRC_PATH}/init.c"
                      "${util_SRC_PATH}/pt.h"
                      "${util_SRC_PATH}/refcount.c"
                      "${util_SRC_PATH}/refcount.h"
+                     "${util_SRC_PATH}/vector.c"
+                     "${util_SRC_PATH}/vector.h"
                      "${platform_SRC_PATH}/platform.c"
                      "${platform_SRC_PATH}/platform.h" )
 
