@@ -31,7 +31,7 @@ extern void *rc_inc(const void *data);
 extern void *rc_dec(const void *data);
 extern void *rc_weak_inc(const void *data);
 extern void *rc_weak_dec(const void *data);
-extern void *rc_deref(const void *data);
+//extern void *rc_deref(const void *data);
 //extern void rc_free(const void *data);
 //extern int rc_count(const void *data);
 
