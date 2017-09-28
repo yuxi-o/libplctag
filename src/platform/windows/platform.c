@@ -140,6 +140,20 @@ extern void mem_copy(void *d1, void *d2, int size)
 
 
 
+/*
+ * mem_move
+ *
+ * move memory from one pointer to another for the passed number of bytes.
+ */
+extern void mem_move(void *dest, void *src, int size)
+{
+    memmove(dest, src, size);
+}
+
+
+
+
+
 
 /***************************************************************************
  ******************************* Strings ***********************************
