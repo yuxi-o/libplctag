@@ -36,71 +36,51 @@
 #include <platform.h>
 #include <util/attr.h>
 
-#define PLCTAG_CANARY (0xACA7CAFE)
-#define PLCTAG_DATA_LITTLE_ENDIAN   (0)
-#define PLCTAG_DATA_BIG_ENDIAN      (1)
 
-extern mutex_p global_library_mutex;
-
-typedef struct plc_tag_t *plc_tag_p;
-
-
-/* define tag operation functions */
-typedef int (*tag_abort_func)(plc_tag_p tag);
-typedef int (*tag_destroy_func)(plc_tag_p tag);
-typedef int (*tag_read_func)(plc_tag_p tag);
-typedef int (*tag_status_func)(plc_tag_p tag);
-typedef int (*tag_write_func)(plc_tag_p tag);
-
-typedef int (*tag_vtable_func)(plc_tag_p tag);
-
-/* we'll need to set these per protocol type. */
-struct tag_vtable_t {
-    tag_vtable_func abort;
-    tag_vtable_func destroy;
-    tag_vtable_func read;
-    tag_vtable_func status;
-    tag_vtable_func write;
-};
-
-typedef struct tag_vtable_t *tag_vtable_p;
 
 
 /*
- * The base definition of the tag structure.  This is used
- * by the protocol-specific implementations.
- *
- * The base type only has a vtable for operations.
+ * All implementations must "subclass" this in some manner.
  */
 
-#define TAG_BASE_STRUCT tag_vtable_p vtable; \
-                        mutex_p mut; \
-                        int status; \
-                        int endian; \
-                        int tag_id; \
-                        int64_t read_cache_expire; \
-                        int64_t read_cache_ms; \
-                        int size; \
-                        uint8_t *data
+typedef struct impl_tag_t *impl_tag_p;
 
-struct plc_tag_dummy {
-    int tag_id;
+struct impl_vtable {
+	int (*abort)(impl_tag_p tag);
+	int (*get_status)(impl_tag_p tag);
+	int (*start_read)(impl_tag_p tag);
+	int (*start_write)(impl_tag_p tag);
+
+	int (*get_size)(impl_tag_p tag);
+
+	int8_t (*get_int8)(impl_tag_p tag, int offset);
+	int16_t (*get_int16)(impl_tag_p tag, int offset);
+	int32_t (*get_int32)(impl_tag_p tag, int offset);
+	int64_t (*get_int64)(impl_tag_p tag, int offset);
+	float (*get_float32)(impl_tag_p tag, int offset);
+	double (*get_float64)(impl_tag_p tag, int offset);
+
+	int (*set_int8)(impl_tag_p tag, int offset, int8_t val);
+	int (*set_int16)(impl_tag_p tag, int offset, int16_t val);
+	int (*set_int32)(impl_tag_p tag, int offset, int32_t val);
+	int (*set_int64)(impl_tag_p tag, int offset, int64_t val);
+	int (*set_float32)(impl_tag_p tag, int offset, float val);
+	int (*set_float64)(impl_tag_p tag, int offset, double val);
 };
 
-struct plc_tag_t {
-    TAG_BASE_STRUCT;
+struct impl_tag_t {
+	struct impl_vtable *vtable;
 };
 
-#define PLC_TAG_P_NULL ((plc_tag_p)0)
 
 
 /* the following may need to be used where the tag is already mapped or is not yet mapped */
 extern int lib_init(void);
 extern void lib_teardown(void);
-extern int plc_tag_abort_mapped(plc_tag_p tag);
-extern int plc_tag_destroy_mapped(plc_tag_p tag);
-extern int plc_tag_status_mapped(plc_tag_p tag);
 
+//~ extern int plc_tag_abort_mapped(plc_tag_p tag);
+//~ extern int plc_tag_destroy_mapped(plc_tag_p tag);
+//~ extern int plc_tag_status_mapped(plc_tag_p tag);
 
 
 #endif

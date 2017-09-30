@@ -116,9 +116,7 @@ MESSAGE("BASE_C_FLAGS=${BASE_C_FLAGS}")
 MESSAGE("BASE_CXX_FLAGS=${BASE_CXX_FLAGS}")
 
 # set up the library sources
-set ( libplctag_SRCS "${lib_SRC_PATH}/init.c"
-                     "${lib_SRC_PATH}/init.h"
-                     "${lib_SRC_PATH}/libplctag.h"
+set ( libplctag_SRCS "${lib_SRC_PATH}/libplctag.h"
                      "${lib_SRC_PATH}/lib.c"
                      "${lib_SRC_PATH}/lib.h"
                      "${platform_SRC_PATH}/platform.c"
