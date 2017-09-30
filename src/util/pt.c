@@ -22,18 +22,22 @@
 #include <platform.h>
 #include <lib/libplctag.h>
 #include <util/debug.h>
+#include <util/vector.h>
 #include <util/pt.h>
 
 
+
+typedef enum { WAITING, RUNNING, DEAD } pt_state;
+
 struct pt_entry {
-    struct pt_entry *next;
+	pt_state state;
+	int pt_pc;
     void *args;
-    void *ctx;
     pt_func func;
 };
 
 
-static volatile struct pt_entry *pt_list = NULL;
+static volatile vector_p pt_list = NULL;
 
 /* global PT mutex protecting the PT list. */
 static volatile mutex_p global_pt_mut = NULL;
@@ -51,12 +55,15 @@ static volatile int library_terminating = 0;
 
 
 
+static void pt_entry_destroy(void *);
+
+
 /*
  * Library initialization point for protothreads.
  */
 
 
-int pt_init(void)
+int pt_service_init(void)
 {
     int rc = PLCTAG_STATUS_OK;
 
@@ -70,14 +77,20 @@ int pt_init(void)
         return rc;
     }
 
+    /* create the vector in which we will have the PTs stored. */
+    pt_list = vector_create(100, 50, RC_WEAK_REF); /* make it a weak list */
+    if(!pt_list) {
+		pdebug(DEBUG_ERROR,"Unable to allocate a vector!");
+		return PLCTAG_ERR_CREATE;
+	}
+
     /* create the background PT runner thread */
     rc = thread_create((thread_p*)&pt_thread, pt_runner, 32*1024, NULL);
-
     if(rc != PLCTAG_STATUS_OK) {
+		rc_dec(pt_list);
         pdebug(DEBUG_INFO,"Unable to create PT runner thread!");
         return rc;
     }
-
 
     pdebug(DEBUG_INFO,"Finished initializing Protothread utility.");
 
@@ -88,7 +101,7 @@ int pt_init(void)
 /*
  * called when the whole program is going to terminate.
  */
-void pt_teardown(void)
+void pt_service_teardown(void)
 {
     pdebug(DEBUG_INFO,"Releasing global Protothread resources.");
 
@@ -100,6 +113,10 @@ void pt_teardown(void)
     thread_join(pt_thread);
     thread_destroy((thread_p*)&pt_thread);
 
+    pdebug(DEBUG_INFO,"Freeing PT list.");
+    /* free the vector of PTs */
+    rc_dec(pt_list);
+
     pdebug(DEBUG_INFO,"Freeing global PT mutex.");
     /* clean up the mutex */
     mutex_destroy((mutex_p*)&global_pt_mut);
@@ -109,81 +126,46 @@ void pt_teardown(void)
 
 
 
-int pt_schedule(pt_func func, void *args)
+pt pt_create(pt_func func, void *args)
 {
-    struct pt_entry *entry = mem_alloc(sizeof(struct pt_entry));
+    struct pt_entry *entry = rc_alloc(sizeof(struct pt_entry), pt_entry_destroy);
 
     if(!entry) {
         pdebug(DEBUG_ERROR,"Cannot allocate new pt entry!");
-        return PLCTAG_ERR_NO_MEM;
-    }
-
-    entry->func = func;
-    entry->args = args;
-    entry->next = NULL;
-
-    critical_block(global_pt_mut) {
-        /* insert at the end of the list */
-        struct pt_entry **walker = (struct pt_entry **)&pt_list;
-
-        while(*walker) {
-            walker = &(*walker)->next;
-        }
-
-        /* now we are at the end */
-        *walker = entry;
-    }
-
-    return PLCTAG_STATUS_OK;
-}
-
-
-/*
- * Removes a PT from the list.  Returns the PT if found.
- * If not found, returns NULL.
- */
-
-static struct pt_entry *pt_remove(struct pt_entry *entry)
-{
-    struct pt_entry **walker = (struct pt_entry **)&pt_list;  /* safe, pt_list is global and cannot move */
-    int found = 0;
-
-    critical_block(global_pt_mut) {
-        /*
-         * since the list could have mutated since we started
-         * walking it, we need to find the entry we want to
-         * delete.
-         */
-        while(*walker && *walker != entry) {
-            walker = &(*walker)->next;
-        }
-
-        /* should not need this check, but... */
-        if(*walker == entry) {
-            *walker = entry->next;
-            found = 1;
-        }
-    }
-
-    if(found) {
-        return entry;
-    } else {
         return NULL;
     }
-}
 
-
-static struct pt_entry *pt_next(struct pt_entry *entry)
-{
-    struct pt_entry *result = NULL;
+	entry->state = WAITING;
+    entry->args = rc_inc(args);
+    entry->func = func;
 
     critical_block(global_pt_mut) {
-        if(entry) {
-            result = entry->next;
-        }
+		/*
+		 * Note: The "<=" is deliberate here.   If we cannot
+		 * find an empty slot earlier, we will go one past the
+		 * end of the current vector content and place the new
+		 * element there.
+		 *
+		 * FIXME - check if this does not succeed.
+		 */
+		for(int i=0; i <= vector_length(pt_list); i++) {
+			/* this takes a strong reference */
+			struct pt_entry *tmp = vector_get(pt_list, i);
+
+			if(!tmp) {
+				if(vector_put(pt_list, i, entry) != PLCTAG_STATUS_OK) {
+					pdebug(DEBUG_ERROR,"Unable to add new PT entry!");
+					entry = rc_dec(entry);
+				}
+				break;
+			} else {
+				/* release the reference */
+				rc_dec(tmp);
+			}
+		}
     }
 
-    return result;
+    return entry;
 }
 
 
@@ -198,40 +180,54 @@ void* pt_runner(void* not_used)
     pdebug(DEBUG_INFO,"PT Runner starting with arg %p",not_used);
 
     while(!library_terminating) {
-        struct pt_entry *curr = NULL;
+		/* scan over all the entries looking for one that is valid and not running. */
+		for(int index=0; index < vector_length(pt_list); index++) {
+			pt current_pt = NULL;
+			
+			critical_block(global_pt_mut) {
+				/* this gets a strong reference if the reference is valid. */
+				current_pt = vector_get(pt_list, index);
 
-        critical_block(global_pt_mut) {
-            curr = (struct pt_entry *)pt_list;
-        }
+				/* did we get a valid ref? */
+				if(current_pt) {
+					/* is it ready to run? */
+					if(current_pt->state == WAITING) {
+						/* yes, so mark it as running to prevent other threads from changing it. */
+						current_pt->state = RUNNING;
+					} else {
+						/* no? is it dead? */
+						if(current_pt->state == DEAD) {
+							/* clean it up */
+							vector_put(pt_list, index, NULL);
+						}
 
-        pdebug(DEBUG_SPEW,"Starting to walk PT list.");
+						/* we are done with this one, it is not available for executing. */
+						current_pt = rc_dec(current_pt);
+					}
+				}
+			}
 
-        while(curr) {
-            struct pt_entry *next = NULL;
+			/* if we have a current PT, then it is valid, we have a strong reference to
+			 * it and we are the ones that changed it to RUNNING thus locking it from other
+			 * threads.
+			 */
 
-            pdebug(DEBUG_SPEW,"Running PT %p",curr);
+			if(current_pt) {
+				if(current_pt->func(&current_pt->pt_pc, current_pt->args) == PT_TERMINATE) {
+					current_pt->state = DEAD;
+					/*
+					 * Do not clean this up here.   Do that in the mutex-protected block
+					 * above on the next run.
+					 */
+				}
 
-            if(curr->func(curr->args,&curr->ctx) == PT_TERMINATE) {
-                struct pt_entry *tmp = NULL;
+				/* we are done with the reference. */
+				current_pt = rc_dec(current_pt);
+			}
+		}
 
-                next = pt_next(curr);
-
-                tmp = pt_remove(curr);
-
-                if(tmp) {
-                    if(curr->args) mem_free(curr->args);
-                    if(curr->ctx) mem_free(curr->ctx);
-                    mem_free(curr);
-                }
-
-                curr = next;
-            } else {
-                curr = pt_next(curr);
-            }
-       }
-
-       /* reschedule the CPU. */
-       sleep_ms(1);
+		/* reschedule the CPU. */
+		sleep_ms(1);
     }
 
     pdebug(DEBUG_DETAIL,"PT Runner thread function exiting.");
@@ -243,3 +239,17 @@ void* pt_runner(void* not_used)
 #endif
 }
 
+
+
+
+void pt_entry_destroy(void *arg)
+{
+	struct pt_entry *entry = arg;
+
+	if(!arg) {
+		pdebug(DEBUG_WARN,"Null pointer passed in!");
+		return;
+	}
+
+	entry->args = rc_dec(entry->args);
+}
