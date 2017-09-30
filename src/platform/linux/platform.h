@@ -49,6 +49,7 @@ extern void mem_free(const void *mem);
 extern void mem_set(void *dest, int c, int size);
 extern void mem_copy(void *dest, void *src, int size);
 extern void mem_move(void *dest, void *src, int size);
+extern int mem_cmp(void *src1, int src1_size, void *src2, int src2_size);
 
 /* string functions/defs */
 extern int str_cmp(const char *first, const char *second);

@@ -129,6 +129,21 @@ extern void mem_move(void *dest, void *src, int size)
 
 
 
+int mem_cmp(void *src1, int src1_size, void *src2, int src2_size)
+{
+	int res = memcmp(src1, src2, (src1_size < src2_size ? src1_size : src2_size));
+
+	/* check if we need to compare the sizes. */
+	if(res != 0) {
+		return res;
+	}
+
+	return (src1_size - src2_size);
+}
+
+
+
+
 
 /***************************************************************************
  ******************************* Strings ***********************************
