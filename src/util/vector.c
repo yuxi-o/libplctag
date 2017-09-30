@@ -45,6 +45,8 @@ vector_p vector_create(int capacity, int max_inc, rc_ref_type ref_type)
 {
 	vector_p result = NULL;
 
+	pdebug(DEBUG_INFO,"Starting");
+
 	if(capacity <= 0) {
 		pdebug(DEBUG_WARN, "Called with negative capacity!");
 		return NULL;
@@ -73,6 +75,8 @@ vector_p vector_create(int capacity, int max_inc, rc_ref_type ref_type)
 	result->capacity = capacity;
 	result->max_inc = max_inc;
 
+	pdebug(DEBUG_INFO,"Done");
+	
 	return result;
 }
 
@@ -81,6 +85,8 @@ vector_p vector_create(int capacity, int max_inc, rc_ref_type ref_type)
 int vector_length(vector_p vec)
 {
 	int len;
+
+	pdebug(DEBUG_DETAIL,"Starting");
 
 	/*
 	 * We grab a strong reference to the vector.   This ensures that it cannot
@@ -97,6 +103,8 @@ int vector_length(vector_p vec)
 	/* new we can release the ref */
 	rc_dec(vec);
 
+	pdebug(DEBUG_DETAIL,"Done");
+
 	return len;
 }
 
@@ -105,6 +113,8 @@ int vector_length(vector_p vec)
 int vector_put(vector_p vec, int index, void *data)
 {
 	int rc = PLCTAG_STATUS_OK;
+
+	pdebug(DEBUG_INFO,"Starting");
 	
 	/*
 	 * We grab a strong reference to the vector.   This ensures that it cannot
@@ -143,6 +153,8 @@ int vector_put(vector_p vec, int index, void *data)
 	/* now free the reference as we are done modifying the vector's memory */
 	rc_dec(vec);
 
+	pdebug(DEBUG_INFO,"Done");
+
 	return rc;
 }
 
@@ -150,6 +162,8 @@ int vector_put(vector_p vec, int index, void *data)
 void *vector_get(vector_p vec, int index)
 {
 	void *result = NULL;
+
+	pdebug(DEBUG_INFO,"Starting");
 	
 	/*
 	 * We grab a strong reference to the vector.   This ensures that it cannot
@@ -179,6 +193,8 @@ void *vector_get(vector_p vec, int index)
 	/* free the reference to the vector itself. */
 	rc_dec(vec);
 
+	pdebug(DEBUG_INFO,"Done");
+	
 	return result;
 }
 
@@ -186,6 +202,8 @@ void *vector_get(vector_p vec, int index)
 void *vector_remove(vector_p vec, int index)
 {
 	void *result = NULL;
+
+	pdebug(DEBUG_INFO,"Starting");
 
 	/*
 	 * We grab a strong reference to the vector.   This ensures that it cannot
@@ -213,10 +231,12 @@ void *vector_remove(vector_p vec, int index)
 	vec->data[vec->len - 1] = NULL;
 
 	/* adjust the length to the new size */
-	--vec->len;
+	vec->len--;
 
 	/* now that we are done mutating the vector, free the reference */
 	rc_dec(vec);
+
+	pdebug(DEBUG_INFO,"Done");
 
 	return result;
 }
