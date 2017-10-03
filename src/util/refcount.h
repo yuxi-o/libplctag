@@ -24,15 +24,16 @@
 
 #include <platform.h>
 
-typedef enum { RC_STRONG_REF, RC_WEAK_REF } rc_ref_type;
+typedef struct { struct refcount_t *ref; } rc_ref;
 
+#define NULL_REF {0,}
 
-extern void *rc_alloc(int size, void (*cleanup_func)(void *data));
-extern void *rc_inc(const void *data);
-extern void *rc_dec(const void *data);
-extern void *rc_weak_inc(const void *data);
-extern void *rc_weak_dec(const void *data);
-//extern void *rc_deref(const void *data);
+extern rc_ref rc_alloc(int size, void (*cleanup_func)(void *data));
+extern rc_ref rc_inc(rc_ref ref);
+extern rc_ref rc_dec(rc_ref ref);
+extern rc_ref rc_weak_inc(rc_ref ref);
+extern rc_ref rc_weak_dec(rc_ref ref);
+extern void *rc_deref(rc_ref ref);
 //extern void rc_free(const void *data);
 //extern int rc_count(const void *data);
 
