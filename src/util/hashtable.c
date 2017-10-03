@@ -29,17 +29,17 @@
 
 
 struct hashtable_t {
-	rc_ref_type ref_type;
-	int bucket_size;
-	vector_p buckets;
+    rc_ref_type ref_type;
+    int bucket_size;
+    vector_p buckets;
 };
 
 
 struct hashtable_entry_t {
-	rc_ref_type ref_type;
-	void *data;
-	int key_len;
-	uint8_t key[]; /* use zero-length array trick to avoid allocation. */
+    rc_ref_type ref_type;
+    void *data;
+    int key_len;
+    void *key;
 };
 
 
@@ -58,81 +58,90 @@ void hashtable_entry_destroy(void *arg);
 
 hashtable_p hashtable_create(int size, rc_ref_type ref_type)
 {
-	hashtable_p res = NULL;
-	vector_p bucket = NULL;
+    hashtable_p res = NULL;
+    vector_p bucket = NULL;
 
-	pdebug(DEBUG_INFO,"Starting");
-	
-	if(size <= 0) {
-		pdebug(DEBUG_WARN,"Size is less than or equal to zero!");
-		return NULL;
-	}
+    pdebug(DEBUG_INFO,"Starting");
 
-	res = rc_alloc(sizeof(struct hashtable_t), hashtable_destroy);
-	if(!res) {
-		pdebug(DEBUG_ERROR,"Unable to allocate memory for hash table!");
-		return NULL;
-	}
+    if(size <= 0) {
+        pdebug(DEBUG_WARN,"Size is less than or equal to zero!");
+        return NULL;
+    }
 
-	res->ref_type = ref_type;
-	res->bucket_size = size;
-	res->buckets = vector_create(size, 1, RC_STRONG_REF);
-	if(!res->buckets) {
-		pdebug(DEBUG_ERROR,"Unable to allocate memory for bucket vector!");
-		rc_dec(res);
-		return NULL;
-	}
+    res = rc_alloc(sizeof(struct hashtable_t), hashtable_destroy);
+    if(!res) {
+        pdebug(DEBUG_ERROR,"Unable to allocate memory for hash table!");
+        return NULL;
+    }
 
-	for(int i=0; i < size; i++) {
-		bucket = vector_create(5, 5, RC_STRONG_REF); /* FIXME - MAGIC */
-		if(!bucket) {
-			pdebug(DEBUG_ERROR,"Unable to allocate memory for bucket %d!",i);
-			rc_dec(res);
-			return NULL;
-		} else {
-			vector_put(res->buckets, i, bucket);
-		}
-	}
+    res->ref_type = ref_type;
+    res->bucket_size = size;
+    res->buckets = vector_create(size, 1, RC_STRONG_REF);
+    if(!res->buckets) {
+        pdebug(DEBUG_ERROR,"Unable to allocate memory for bucket vector!");
+        rc_dec(res);
+        return NULL;
+    }
 
-	pdebug(DEBUG_INFO,"Done");
-	
-	return res;
+    for(int i=0; i < size; i++) {
+        bucket = vector_create(5, 5, RC_STRONG_REF); /* FIXME - MAGIC */
+        if(!bucket) {
+            pdebug(DEBUG_ERROR,"Unable to allocate memory for bucket %d!",i);
+            rc_dec(res);
+            return NULL;
+        } else {
+            /* this takes a new strong reference to the bucket */
+            vector_put(res->buckets, i, bucket);
+
+            /* so release the strong reference that we got from vector_create(). */
+            rc_dec(bucket);
+        }
+    }
+
+    pdebug(DEBUG_INFO,"Done");
+
+    return res;
 }
 
 
 void *hashtable_get(hashtable_p table, void *key, int key_len)
 {
-	uint32_t bucket_index = 0;
-	vector_p bucket = NULL;
-	uint32_t entry_index = 0;
-	struct hashtable_entry_t *entry = NULL;
-	void *result = NULL;
-	int rc = PLCTAG_STATUS_OK;
+    uint32_t bucket_index = 0;
+    vector_p bucket = NULL;
+    uint32_t entry_index = 0;
+    struct hashtable_entry_t *entry = NULL;
+    void *result = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
-	pdebug(DEBUG_INFO,"Starting");
-	
-	if(!rc_inc(table)) {
-		pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
-		return NULL;
-	}
+    pdebug(DEBUG_INFO,"Starting");
 
-	if(!key || key_len <=0) {
-		pdebug(DEBUG_WARN,"Key missing or of zero length.");
-		rc_dec(table);
-		return NULL;
-	}
+    if(!rc_inc(table)) {
+        pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
+        return NULL;
+    }
 
-	rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry);
-	if(rc == PLCTAG_STATUS_OK) {
-		/* found */
-		result = rc_inc(entry->data);
-	}
+    if(!key || key_len <=0) {
+        pdebug(DEBUG_WARN,"Key missing or of zero length.");
+        rc_dec(table);
+        return NULL;
+    }
 
-	rc_dec(table);
+    rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry);
+    if(rc == PLCTAG_STATUS_OK) {
+        /* found */
+        result = rc_inc(entry->data);
 
-	pdebug(DEBUG_INFO,"Done");
-	
-	return result;
+        /* clean up empty slots */
+        if(!result) {
+            hashtable_remove(table, key, key_len);
+        }
+    }
+
+    rc_dec(table);
+
+    pdebug(DEBUG_INFO,"Done");
+
+    return result;
 }
 
 
@@ -140,87 +149,104 @@ void *hashtable_get(hashtable_p table, void *key, int key_len)
 
 int hashtable_put(hashtable_p table, void *key, int key_len, void *data)
 {
-	uint32_t bucket_index = 0;
-	vector_p bucket = NULL;
-	uint32_t entry_index = 0;
-	struct hashtable_entry_t *entry = NULL;
-	int rc = PLCTAG_STATUS_OK;
+    uint32_t bucket_index = 0;
+    vector_p bucket = NULL;
+    uint32_t entry_index = 0;
+    struct hashtable_entry_t *entry = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
-	pdebug(DEBUG_INFO,"Starting");
-	
-	if(!rc_inc(table)) {
-		pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
-		return PLCTAG_ERR_NULL_PTR;
-	}
+    pdebug(DEBUG_INFO,"Starting");
 
-	if(!key || key_len <=0) {
-		pdebug(DEBUG_WARN,"Key missing or of zero length.");
-		rc_dec(table);
-		return PLCTAG_ERR_OUT_OF_BOUNDS;
-	}
+    if(!rc_inc(table)) {
+        pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
+        return PLCTAG_ERR_NULL_PTR;
+    }
 
-	rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry);
-	if(rc == PLCTAG_ERR_NOT_FOUND) {
-		/* not found, this is good. */
+    if(!key || key_len <=0) {
+        pdebug(DEBUG_WARN,"Key missing or of zero length.");
+        rc_dec(table);
+        return PLCTAG_ERR_OUT_OF_BOUNDS;
+    }
 
-		/* create a new entry and insert it into the bucket. */
-		struct hashtable_entry_t *new_entry = hashtable_entry_create(key, key_len, data, table->ref_type);
-		if(!new_entry) {
-			pdebug(DEBUG_ERROR,"Unable to allocate new hashtable entry!");
-			rc = PLCTAG_ERR_NO_MEM;
-		} else {
-			/* add this to the bucket vector. */
-			vector_put(bucket, vector_length(bucket), new_entry);
+    rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry);
+    if(rc == PLCTAG_ERR_NOT_FOUND) {
+        /* not found, this is good. */
 
-			/* remove extra strong reference.   Adding the entry to the vector creates another one. */
-			rc_dec(new_entry);
+        /* create a new entry and insert it into the bucket. */
+        struct hashtable_entry_t *new_entry = hashtable_entry_create(key, key_len, data, table->ref_type);
+        if(!new_entry) {
+            pdebug(DEBUG_ERROR,"Unable to allocate new hashtable entry!");
+            rc = PLCTAG_ERR_NO_MEM;
+        } else {
+            /*
+             * Add this to the bucket vector.
+             * Put it in the first empty entry.  Note the use of "<=" for the guard.  This ensures
+             * that we insert at the end of the vector if there are no empty slots.
+             */
 
-			rc = PLCTAG_STATUS_OK;
-		}
-	}
+            rc = PLCTAG_ERR_NOT_FOUND;
 
-	pdebug(DEBUG_INFO,"Done");
+            for(entry_index = 0; (int)entry_index <= vector_length(bucket); entry_index++) {
+                struct hashtable_entry_t *tmp = vector_get(bucket, entry_index);
 
-	rc_dec(table);
+                if(!tmp) {
+                    /* found a hole. */
+                    vector_put(bucket, entry_index, new_entry);
 
-	return rc;
+                    rc_dec(new_entry);
+
+                    rc = PLCTAG_STATUS_OK;
+
+                    break;
+                } else {
+                    rc_dec(tmp);
+                }
+            }
+        }
+    }
+
+    pdebug(DEBUG_INFO,"Done");
+
+    rc_dec(table);
+
+    return rc;
 }
 
 
 
 int hashtable_remove(hashtable_p table, void *key, int key_len)
 {
-	uint32_t bucket_index = 0;
-	vector_p bucket = NULL;
-	uint32_t entry_index = 0;
-	struct hashtable_entry_t *entry = NULL;
-	int rc = PLCTAG_STATUS_OK;
+    uint32_t bucket_index = 0;
+    vector_p bucket = NULL;
+    uint32_t entry_index = 0;
+    struct hashtable_entry_t *entry = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
-	pdebug(DEBUG_INFO,"Starting");
-	
-	if(!rc_inc(table)) {
-		pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
-		return PLCTAG_ERR_NULL_PTR;
-	}
+    pdebug(DEBUG_INFO,"Starting");
 
-	if(!key || key_len <=0) {
-		pdebug(DEBUG_WARN,"Key missing or of zero length.");
-		rc_dec(table);
-		return PLCTAG_ERR_OUT_OF_BOUNDS;
-	}
+    if(!rc_inc(table)) {
+        pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
+        return PLCTAG_ERR_NULL_PTR;
+    }
 
-	rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry);
-	if(rc == PLCTAG_STATUS_OK) {
-		/* the entry was found. */
-		entry = vector_remove(bucket, entry_index);
-		entry = rc_dec(entry);
-	}
+    if(!key || key_len <=0) {
+        pdebug(DEBUG_WARN,"Key missing or of zero length.");
+        rc_dec(table);
+        return PLCTAG_ERR_OUT_OF_BOUNDS;
+    }
 
-	rc_dec(table);
+    rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry);
+    if(rc == PLCTAG_STATUS_OK) {
+        /* the entry was found. */
+        entry = vector_remove(bucket, entry_index);
+        entry = rc_dec(entry);
+    }
 
-	pdebug(DEBUG_INFO,"Done");
+    rc_dec(table);
 
-	return rc;
+    pdebug(DEBUG_INFO,"Done");
+
+    return rc;
 }
 
 
@@ -234,15 +260,15 @@ int hashtable_remove(hashtable_p table, void *key, int key_len)
 
 void hashtable_destroy(void *arg)
 {
-	hashtable_p table = arg;
+    hashtable_p table = arg;
 
-	pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_INFO,"Starting");
 
-	if(table) {
-		table->buckets = rc_dec(table->buckets);
-	}
+    if(table) {
+        table->buckets = rc_dec(table->buckets);
+    }
 
-	pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_INFO,"Done");
 }
 
 
@@ -252,86 +278,89 @@ void hashtable_destroy(void *arg)
 
 int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index, vector_p *bucket, uint32_t *index, struct hashtable_entry_t **entry)
 {
-	int rc = PLCTAG_ERR_NOT_FOUND;
+    int rc = PLCTAG_ERR_NOT_FOUND;
 
-	pdebug(DEBUG_INFO,"Starting");
-	
-	/* get the right bucket */
-	*bucket_index = hash(key, key_len, table->bucket_size) % table->bucket_size;
-	*bucket = vector_get(table->buckets, *bucket_index);
-	if(!*bucket) {
-		pdebug(DEBUG_ERROR,"Bucket is NULL!");
-		return PLCTAG_ERR_NO_DATA;
-	}
+    pdebug(DEBUG_INFO,"Starting");
 
-	/* find the entry */
-	for(*index=0; rc==PLCTAG_ERR_NOT_FOUND && (int)(*index) < vector_length(*bucket); *index = *index + 1) {
-		*entry = vector_get(*bucket, *index);
-		if(*entry) {
-			if(entry_cmp(*entry, key, key_len) == 0) {
-				rc = PLCTAG_STATUS_OK;
-			}
+    /* get the right bucket */
+    *bucket_index = hash(key, key_len, table->bucket_size) % table->bucket_size;
+    *bucket = vector_get(table->buckets, *bucket_index);
+    if(!*bucket) {
+        pdebug(DEBUG_ERROR,"Bucket is NULL!");
+        return PLCTAG_ERR_NO_DATA;
+    }
 
-			rc_dec(*entry);
-		}
-	}
+    /* find the entry */
+    for(*index=0; rc==PLCTAG_ERR_NOT_FOUND && (int)(*index) < vector_length(*bucket); *index = *index + 1) {
+        *entry = vector_get(*bucket, *index);
+        if(*entry) {
+            /* we do not need the extra strong ref. */
+            rc_dec(*entry);
 
-	rc_dec(*bucket);
+            if(entry_cmp(*entry, key, key_len) == 0) {
+                rc = PLCTAG_STATUS_OK;
+                break; /* punt out and do not increment index. */
+            }
+        }
+    }
 
-	pdebug(DEBUG_INFO,"Done.");
+    rc_dec(*bucket);
 
-	return rc;
+    pdebug(DEBUG_INFO,"Done.");
+
+    return rc;
 }
 
 
 
 int entry_cmp(struct hashtable_entry_t *entry, void *key, int key_len)
 {
-	if(!entry) {
-		pdebug(DEBUG_WARN,"Bad entry");
-		return -1;
-	}
+    if(!entry) {
+        pdebug(DEBUG_WARN,"Bad entry");
+        return -1;
+    }
 
-	if(!key || key_len <= 0) {
-		pdebug(DEBUG_WARN,"Bad key");
-		return -1;
-	}
+    if(!key || key_len <= 0) {
+        pdebug(DEBUG_WARN,"Bad key");
+        return -1;
+    }
 
-	return mem_cmp(&entry->key[0], entry->key_len, key, key_len);
+    return mem_cmp(entry->key, entry->key_len, key, key_len);
 }
 
 
 
 struct hashtable_entry_t *hashtable_entry_create(void *key, int key_len, void *data, rc_ref_type ref_type)
 {
-	struct hashtable_entry_t *new_entry = rc_alloc(sizeof(struct hashtable_entry_t) + key_len, hashtable_entry_destroy);
-	
-	if(!new_entry) {
-		pdebug(DEBUG_ERROR,"Unable to allocate new hashtable entry!");
-	} else {
-		new_entry->data = (ref_type == RC_STRONG_REF ? rc_inc(data) : rc_weak_inc(data));
-		new_entry->ref_type = ref_type;
-		new_entry->key_len = key_len;
-		mem_copy((uint8_t *)(new_entry + 1), key, key_len);
-		pdebug(DEBUG_INFO,"Done creating new hashtable entry.");
-	}
+    struct hashtable_entry_t *new_entry = rc_alloc(sizeof(struct hashtable_entry_t) + key_len, hashtable_entry_destroy);
 
-	return new_entry;
+    if(!new_entry) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new hashtable entry!");
+    } else {
+        new_entry->data = (ref_type == RC_STRONG_REF ? rc_inc(data) : rc_weak_inc(data));
+        new_entry->ref_type = ref_type;
+        new_entry->key_len = key_len;
+        new_entry->key = (void *)(new_entry + 1);
+        mem_copy(new_entry->key, key, key_len);
+        pdebug(DEBUG_INFO,"Done creating new hashtable entry.");
+    }
+
+    return new_entry;
 }
 
 
 void hashtable_entry_destroy(void *arg)
 {
-	struct hashtable_entry_t *entry = arg;
+    struct hashtable_entry_t *entry = arg;
 
-	pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_INFO,"Starting");
 
-	if(!entry) {
-		pdebug(DEBUG_WARN,"Invalid reference passed!");
-	} else {
-		entry->data = (entry->ref_type == RC_STRONG_REF ? rc_dec(entry->data) : rc_weak_dec(entry->data));
-	}
+    if(!entry) {
+        pdebug(DEBUG_WARN,"Invalid reference passed!");
+    } else {
+        entry->data = (entry->ref_type == RC_STRONG_REF ? rc_dec(entry->data) : rc_weak_dec(entry->data));
+    }
 
-	pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_INFO,"Done");
 }
 

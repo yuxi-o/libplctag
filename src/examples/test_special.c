@@ -27,26 +27,30 @@
 
 void test_version(void)
 {
-    plc_tag tag = PLC_TAG_NULL;
+    tag_id tag = PLC_TAG_NULL;
     int i;
-    char ver[16] = {0,};
+    int ver[3] = {0,};
 
     fprintf(stderr,"Testing version tag.\n");
 
-    tag = plc_tag_create("make=system&family=library&name=version&debug=4", 0);
+    tag = plc_tag_create("protocol=system&name=version&debug=4", 0);
 
     if(!tag) {
         fprintf(stderr,"ERROR: Could not create tag!\n");
         return;
     }
 
-    plc_tag_read(tag, 0);
-
-    for(i=0; i < 16 && plc_tag_get_uint8(tag,i) != 0; i++) {
-        ver[i] = (char)plc_tag_get_uint8(tag,i);
+    while(plc_tag_status(tag) == PLCTAG_STATUS_PENDING) {
+        sleep_ms(10);
     }
 
-    fprintf(stderr,"Library version %s\n", ver);
+    plc_tag_read(tag, 0);
+
+    for(i=0; i < 3; i++) {
+        ver[i] = (int)plc_tag_get_int32(tag,i*4);
+    }
+
+    fprintf(stderr,"Library version %d.%d.%d\n", ver[0],ver[1],ver[2]);
 
     plc_tag_destroy(tag);
 }
@@ -55,16 +59,20 @@ void test_version(void)
 
 void test_debug(void)
 {
-    plc_tag tag = PLC_TAG_NULL;
+    tag_id tag = PLC_TAG_NULL;
     int old_debug, new_debug;
 
     fprintf(stderr,"Testing debug tag.\n");
 
-    tag = plc_tag_create("make=system&family=library&name=debug&debug=4", 0);
+    tag = plc_tag_create("protocol=system&name=debug&debug=4", 0);
 
     if(!tag) {
         fprintf(stderr,"ERROR: Could not create tag!\n");
         return;
+    }
+
+    while(plc_tag_status(tag) == PLCTAG_STATUS_PENDING) {
+        sleep_ms(10);
     }
 
     plc_tag_read(tag, 0);
@@ -73,7 +81,7 @@ void test_debug(void)
 
     fprintf(stderr,"Current debug level is %d\n",old_debug);
 
-    new_debug = (old_debug == 3 ? 4 : 3);
+    new_debug = (old_debug == 4 ? 3 : 4);
 
     plc_tag_set_int32(tag, 0, new_debug);
 

@@ -38,38 +38,33 @@
 
 
 
+extern const char *VERSION;
+extern const int VERSION_ARRAY[3];
+
+
+
+typedef struct impl_tag_t *impl_tag_p;
+
+struct impl_vtable {
+    int (*abort)(impl_tag_p tag);
+    int (*get_size)(impl_tag_p tag);
+    int (*get_status)(impl_tag_p tag);
+    int (*start_read)(impl_tag_p tag);
+    int (*start_write)(impl_tag_p tag);
+
+    int (*get_int)(impl_tag_p tag, int offset, int size, int64_t *val);
+    int (*set_int)(impl_tag_p tag, int offset, int size, int64_t val);
+    int (*get_double)(impl_tag_p tag, int offset, int size, double *val);
+    int (*set_double)(impl_tag_p tag, int offset, int size, double val);
+};
+
 
 /*
  * All implementations must "subclass" this in some manner.
  */
 
-typedef struct impl_tag_t *impl_tag_p;
-
-struct impl_vtable {
-	int (*abort)(impl_tag_p tag);
-	int (*get_status)(impl_tag_p tag);
-	int (*start_read)(impl_tag_p tag);
-	int (*start_write)(impl_tag_p tag);
-
-	int (*get_size)(impl_tag_p tag);
-
-	int8_t (*get_int8)(impl_tag_p tag, int offset);
-	int16_t (*get_int16)(impl_tag_p tag, int offset);
-	int32_t (*get_int32)(impl_tag_p tag, int offset);
-	int64_t (*get_int64)(impl_tag_p tag, int offset);
-	float (*get_float32)(impl_tag_p tag, int offset);
-	double (*get_float64)(impl_tag_p tag, int offset);
-
-	int (*set_int8)(impl_tag_p tag, int offset, int8_t val);
-	int (*set_int16)(impl_tag_p tag, int offset, int16_t val);
-	int (*set_int32)(impl_tag_p tag, int offset, int32_t val);
-	int (*set_int64)(impl_tag_p tag, int offset, int64_t val);
-	int (*set_float32)(impl_tag_p tag, int offset, float val);
-	int (*set_float64)(impl_tag_p tag, int offset, double val);
-};
-
 struct impl_tag_t {
-	struct impl_vtable *vtable;
+    struct impl_vtable *vtable;
 };
 
 

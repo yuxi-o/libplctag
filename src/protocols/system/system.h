@@ -24,8 +24,8 @@
 #include <util/attr.h>
 #include <util/debug.h>
 #include <platform.h>
-#include <lib/libplctag_tag.h>
+#include <lib/lib.h>
 
-extern plc_tag_p system_tag_create(attr attribs);
+extern impl_tag_p system_tag_create(attr attribs);
 
 #endif

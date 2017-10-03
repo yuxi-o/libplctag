@@ -30,8 +30,7 @@
 #define MAX_SYSTEM_TAG_SIZE (30)
 
 struct system_tag_t {
-    /*struct plc_tag_t p_tag;*/
-    TAG_BASE_STRUCT;
+    struct impl_tag_t base_tag;
 
     char name[MAX_SYSTEM_TAG_NAME];
     uint8_t backing_data[MAX_SYSTEM_TAG_SIZE];
