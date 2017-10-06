@@ -270,6 +270,7 @@ void hashtable_destroy(void *arg)
 
     if(table) {
         rc_release(table->buckets);
+        mem_free(table);
     }
 
     pdebug(DEBUG_INFO,"Done");
@@ -369,6 +370,7 @@ void hashtable_entry_destroy(void *arg)
         pdebug(DEBUG_WARN,"Invalid reference passed!");
     } else {
         rc_release(entry->data_ref);
+        mem_free(entry);
     }
 
     pdebug(DEBUG_INFO,"Done");

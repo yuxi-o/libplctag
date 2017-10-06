@@ -165,30 +165,28 @@ rc_ref rc_strong_impl(const char *func, int line_num, rc_ref ref)
         return result;
     }
 
+    rc = get_refcount(ref);
+
+    if(!rc) {
+        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
+        return result;
+    }
+
     /* loop until we get the lock */
     while (!lock_acquire(&rc->lock)) {
         ; /* do nothing, just spin */
     }
 
-    /*
-     * Get the ref count struct from the pointer.
-     * This will work regardless of whether the ref is
-     * a pointer to the weak or strong reference.
-     */
-    rc = get_refcount(ref);
-
-    /* rc is valid and not null because we already tested the input counter pointer earlier. */
-
     if(rc->strong > 0) {
         rc->strong += 2;
-        strong = rc->strong;
         result.counter = &(rc->strong);
     } else {
         // the reference was bad!
-        strong = rc->strong = 0;
-        result.counter = NULL;
+        pdebug(DEBUG_DETAIL,"Attempt to get strong reference on already invalid reference.");
+        rc->strong = 0;
     }
 
+    strong = rc->strong;
     weak = rc->weak;
 
     /* release the lock so that other things can get to it. */
@@ -230,30 +228,29 @@ rc_ref rc_weak_impl(const char *func, int line_num, rc_ref ref)
         return result;
     }
 
+    rc = get_refcount(ref);
+
+    if(!rc) {
+        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
+        return result;
+    }
+
     /* loop until we get the lock */
     while (!lock_acquire(&rc->lock)) {
         ; /* do nothing, just spin */
     }
 
-    /*
-     * Get the ref count struct from the pointer.
-     * This will work regardless of whether the ref is
-     * a pointer to the weak or strong reference.
-     */
-    rc = get_refcount(ref);
-
-    /* rc is valid and not null because we already tested the input counter pointer earlier. */
-
     if(rc->strong > 0) {
         rc->weak += 2;
-        strong = rc->strong;
         result.counter = &(rc->weak);
     } else {
         /* the reference was bad! */
-        strong = rc->strong = 0;
+        pdebug(DEBUG_DETAIL,"Attempt to get weak reference on already invalid reference.");
+        rc->strong = 0;
     }
 
     strong = rc->strong;
+    weak = rc->weak;
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
@@ -296,14 +293,17 @@ rc_ref rc_release_impl(const char *func, int line_num, rc_ref ref)
         return RC_REF_NULL;
     }
 
+    rc = get_refcount(ref);
+
+    if(!rc) {
+        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
+        return RC_REF_NULL;
+    }
+
     /* loop until we get the lock */
     while (!lock_acquire(&rc->lock)) {
         ; /* do nothing, just spin */
     }
-
-    rc = get_refcount(ref);
-
-    /* rc is not null because we checked ref.counter above */
 
     rc_type = get_ref_type_unsafe(ref);
     if(rc_type == REF_STRONG) {
@@ -353,10 +353,17 @@ void *rc_deref_impl(const char *func, int line_num, rc_ref ref)
     int weak = 0;
     void *result = NULL;
 
-    pdebug(DEBUG_DETAIL,"Starting, called from %s:%d",func, line_num);
+    pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
 
     if(!ref.counter) {
         pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
+        return result;
+    }
+
+    rc = get_refcount(ref);
+
+    if(!rc) {
+        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
         return result;
     }
 
@@ -365,24 +372,20 @@ void *rc_deref_impl(const char *func, int line_num, rc_ref ref)
         ; /* do nothing, just spin */
     }
 
-    rc = get_refcount(ref);
-
-    /* rc is not null because we checked ref.counter above */
-
     strong = rc->strong;
     weak = rc->weak;
 
-    if(strong > 0 && weak > 1) {
+    if(strong > 0) {
         result = rc->data;
     }
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
 
-    pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
+    pdebug(DEBUG_SPEW,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
 
     if(result) {
-        pdebug(DEBUG_DETAIL,"Valid reference, returning data pointer.");
+        pdebug(DEBUG_SPEW,"Valid reference, returning data pointer.");
     } else {
         pdebug(DEBUG_DETAIL,"Invalid reference, returning NULL pointer.");
     }

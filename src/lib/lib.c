@@ -1114,6 +1114,7 @@ void tag_destroy(void *arg)
         mutex_destroy(&tag->api_mut);
         mutex_destroy(&tag->external_mut);
         rc_release(tag->impl_ref);
+        mem_free(tag);
     }
 }
 

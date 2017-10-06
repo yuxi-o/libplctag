@@ -102,7 +102,6 @@ impl_tag_ref system_tag_create(attr attribs)
      */
 
     tag = mem_alloc(sizeof(struct system_tag_t));
-
     if(!tag) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for system tag!");
         return result;
@@ -292,8 +291,8 @@ void tag_destroy(void *arg)
 
     (void)tag;
 
-    if(!tag) {
-        return;
+    if(tag) {
+        mem_free(tag);
     }
 }
 
