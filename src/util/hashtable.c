@@ -30,12 +30,12 @@
 
 struct hashtable_t {
     int bucket_size;
-    vector_ref buckets;
+    rc_vector buckets;
 };
 
 
 struct hashtable_entry_t {
-    rc_ref data_ref;
+    rc_ptr data_ref;
     int key_len;
     void *key;
 };
@@ -43,25 +43,23 @@ struct hashtable_entry_t {
 
 typedef struct hashtable_t *hashtable_p;
 
-
-RC_MAKE_TYPE(hashtable_entry_ref);
-//~ typedef struct { int *counter; } hashtable_entry_ref;
+typedef rc_ptr rc_hashtable_entry;
 
 static void hashtable_destroy(void *data);
-static int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index, vector_ref *bucket, uint32_t *index, hashtable_entry_ref *entry_ref);
-static int entry_cmp(hashtable_entry_ref entry_ref, void *key, int key_len);
-static hashtable_entry_ref hashtable_entry_create(void *key, int key_len, rc_ref data_ref);
+static int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index, rc_vector *bucket, uint32_t *index, rc_hashtable_entry *entry_ref);
+static int entry_cmp(rc_hashtable_entry entry_ref, void *key, int key_len);
+static rc_hashtable_entry hashtable_entry_create(void *key, int key_len, rc_ptr data_ref);
 void hashtable_entry_destroy(void *arg);
 
 
 
 
 
-hashtable_ref hashtable_create(int size)
+rc_hashtable hashtable_create(int size)
 {
     hashtable_p tab = NULL;
-    vector_ref bucket = RC_VECTOR_NULL;
-    hashtable_ref res = RC_HASHTABLE_NULL;
+    rc_vector bucket = NULL;
+    rc_hashtable res = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
@@ -96,7 +94,12 @@ hashtable_ref hashtable_create(int size)
         }
     }
 
-    res = RC_CAST(hashtable_ref, rc_make_ref(tab, hashtable_destroy));
+    res = rc_make_ref(tab, hashtable_destroy);
+    if(!res) {
+        pdebug(DEBUG_ERROR,"Unable to make ref wrapper for hashtable!");
+        hashtable_destroy(tab);
+        return res;
+    }
 
     pdebug(DEBUG_INFO,"Done");
 
@@ -104,20 +107,20 @@ hashtable_ref hashtable_create(int size)
 }
 
 
-rc_ref hashtable_get(hashtable_ref tab_ref, void *key, int key_len)
+rc_ptr hashtable_get(rc_hashtable tab_ref, void *key, int key_len)
 {
     uint32_t bucket_index = 0;
-    vector_ref bucket = RC_VECTOR_NULL;
+    rc_vector bucket = NULL;
     uint32_t entry_index = 0;
-    hashtable_entry_ref entry_ref;
+    rc_hashtable_entry entry_ref;
     struct hashtable_entry_t *entry = NULL;
-    rc_ref result = RC_REF_NULL;
+    rc_ptr result = NULL;
     int rc = PLCTAG_STATUS_OK;
     hashtable_p table;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    if(!(table = rc_deref(tab_ref))) {
+    if(!tab_ref || !(table = rc_deref(tab_ref))) {
         pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
         return result;
     }
@@ -148,18 +151,18 @@ rc_ref hashtable_get(hashtable_ref tab_ref, void *key, int key_len)
 
 
 
-int hashtable_put_impl(hashtable_ref tab_ref, void *key, int key_len, rc_ref data_ref)
+int hashtable_put(rc_hashtable tab_ref, void *key, int key_len, rc_ptr data_ref)
 {
     uint32_t bucket_index = 0;
-    vector_ref bucket = RC_VECTOR_NULL;
+    rc_vector bucket = NULL;
     uint32_t entry_index = 0;
-    hashtable_entry_ref entry_ref;
+    rc_hashtable_entry entry_ref;
     int rc = PLCTAG_STATUS_OK;
     hashtable_p table;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    if(!(table = rc_deref(tab_ref))) {
+    if(!tab_ref || !(table = rc_deref(tab_ref))) {
         pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -188,7 +191,7 @@ int hashtable_put_impl(hashtable_ref tab_ref, void *key, int key_len, rc_ref dat
             rc = PLCTAG_ERR_NOT_FOUND;
 
             for(entry_index = 0; (int)entry_index <= vector_length(bucket); entry_index++) {
-                hashtable_entry_ref tmp = RC_CAST(hashtable_entry_ref, vector_get(bucket, entry_index));
+                rc_hashtable_entry tmp = vector_get(bucket, entry_index);
 
                 if(!rc_deref(tmp)) {
                     /* found a hole. */
@@ -207,20 +210,20 @@ int hashtable_put_impl(hashtable_ref tab_ref, void *key, int key_len, rc_ref dat
 
 
 
-rc_ref hashtable_remove(hashtable_ref table_ref, void *key, int key_len)
+rc_ptr hashtable_remove(rc_hashtable tab_ref, void *key, int key_len)
 {
     uint32_t bucket_index = 0;
-    vector_ref bucket = RC_VECTOR_NULL;
+    rc_vector bucket = NULL;
     uint32_t entry_index = 0;
-    hashtable_entry_ref entry_ref;
+    rc_hashtable_entry entry_ref;
     struct hashtable_entry_t *entry = NULL;
     int rc = PLCTAG_STATUS_OK;
     hashtable_p table = NULL;
-    rc_ref result = RC_REF_NULL;
+    rc_ptr result = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    if(!(table = rc_deref(table_ref))) {
+    if(!tab_ref || !(table = rc_deref(tab_ref))) {
         pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
         return result;
     }
@@ -232,7 +235,7 @@ rc_ref hashtable_remove(hashtable_ref table_ref, void *key, int key_len)
 
     rc = find_entry(table, key, key_len, &bucket_index, &bucket, &entry_index, &entry_ref);
     if(rc == PLCTAG_STATUS_OK) {
-        entry_ref = RC_CAST(hashtable_entry_ref, vector_remove(bucket, entry_index));
+        entry_ref = vector_remove(bucket, entry_index);
 
         /* the entry was found. */
         entry = rc_deref(entry_ref);
@@ -241,7 +244,7 @@ rc_ref hashtable_remove(hashtable_ref table_ref, void *key, int key_len)
             result = entry->data_ref;
 
             /* clear out the data reference so that it does not get cleaned up. */
-            entry->data_ref = RC_REF_NULL;
+            entry->data_ref = NULL;
         }
 
         /* clean up the entry */
@@ -281,7 +284,7 @@ void hashtable_destroy(void *arg)
 
 
 
-int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index, vector_ref *bucket, uint32_t *index, hashtable_entry_ref *entry)
+int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index, rc_vector *bucket, uint32_t *index, rc_hashtable_entry *entry)
 {
     int rc = PLCTAG_ERR_NOT_FOUND;
 
@@ -289,7 +292,7 @@ int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index
 
     /* get the right bucket */
     *bucket_index = hash(key, key_len, table->bucket_size) % table->bucket_size;
-    *bucket = RC_CAST(vector_ref, vector_get(table->buckets, *bucket_index));
+    *bucket = vector_get(table->buckets, *bucket_index);
     if(!rc_deref(*bucket)) {
         pdebug(DEBUG_ERROR,"Bucket is NULL!");
         return PLCTAG_ERR_NO_DATA;
@@ -297,7 +300,7 @@ int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index
 
     /* find the entry */
     for(*index=0; rc==PLCTAG_ERR_NOT_FOUND && (int)(*index) < vector_length(*bucket); *index = *index + 1) {
-        *entry = RC_CAST(hashtable_entry_ref, vector_get(*bucket, *index));
+        *entry = vector_get(*bucket, *index);
         if(rc_deref(*entry)) {
             if(entry_cmp(*entry, key, key_len) == 0) {
                 rc = PLCTAG_STATUS_OK;
@@ -313,11 +316,11 @@ int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index
 
 
 
-int entry_cmp(hashtable_entry_ref entry_ref, void *key, int key_len)
+int entry_cmp(rc_hashtable_entry entry_ref, void *key, int key_len)
 {
     struct hashtable_entry_t *entry = NULL;
 
-    if(!(entry = rc_deref(entry_ref))) {
+    if(!entry_ref || !(entry = rc_deref(entry_ref))) {
         pdebug(DEBUG_WARN,"Bad entry");
         return -1;
     }
@@ -332,13 +335,14 @@ int entry_cmp(hashtable_entry_ref entry_ref, void *key, int key_len)
 
 
 
-hashtable_entry_ref hashtable_entry_create(void *key, int key_len, rc_ref data_ref)
+rc_hashtable_entry hashtable_entry_create(void *key, int key_len, rc_ptr data_ref)
 {
     struct hashtable_entry_t *new_entry = mem_alloc(sizeof(struct hashtable_entry_t) + key_len);
-    hashtable_entry_ref result = RC_CAST(hashtable_entry_ref, RC_REF_NULL);
+    rc_hashtable_entry result = NULL;
 
     if(!new_entry) {
         pdebug(DEBUG_ERROR,"Unable to allocate new hashtable entry!");
+        return NULL;
     } else {
         new_entry->data_ref = data_ref;
         new_entry->key_len = key_len;
@@ -346,7 +350,7 @@ hashtable_entry_ref hashtable_entry_create(void *key, int key_len, rc_ref data_r
         mem_copy(new_entry->key, key, key_len);
         pdebug(DEBUG_INFO,"Done creating new hashtable entry.");
 
-        result = RC_CAST(hashtable_entry_ref, rc_make_ref(new_entry, hashtable_entry_destroy));
+        result = rc_make_ref(new_entry, hashtable_entry_destroy);
 
         /* did it work? */
         if(!rc_deref(result)) {

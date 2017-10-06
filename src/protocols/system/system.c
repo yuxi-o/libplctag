@@ -80,10 +80,10 @@ struct impl_vtable version_tag_vtable = {abort_operation, size_version, get_stat
 
 
 
-impl_tag_ref system_tag_create(attr attribs)
+rc_impl_tag system_tag_create(attr attribs)
 {
     system_tag_p tag = NULL;
-    impl_tag_ref result = RC_TAG_IMPL_NULL;
+    rc_impl_tag result = NULL;
     const char *name = attr_get_str(attribs, "name", NULL);
 
     pdebug(DEBUG_INFO,"Starting.");
@@ -122,7 +122,7 @@ impl_tag_ref system_tag_create(attr attribs)
         return result;
     }
 
-    result = RC_CAST(impl_tag_ref, rc_make_ref(tag, tag_destroy));
+    result = rc_make_ref(tag, tag_destroy);
     if(!rc_deref(result)) {
         pdebug(DEBUG_ERROR,"Could not make ref from system tag!");
         tag_destroy(tag);

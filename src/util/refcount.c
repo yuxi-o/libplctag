@@ -50,42 +50,23 @@ struct refcount_t {
 
 typedef struct refcount_t *refcount_p;
 
-typedef enum { REF_NULL, REF_STRONG, REF_WEAK} ref_type;
-
-
-
-/*
- * Must be called with lock!
- */
-static inline ref_type get_ref_type_unsafe(rc_ref ref)
-{
-    if(!ref.counter) {
-        return REF_NULL;
-    }
-
-    if(*(ref.counter) & 0x01) {
-        return REF_WEAK;
-    } else {
-        return REF_STRONG;
-    }
-}
 
 
 /*
  * Must be called with lock!
  */
-static inline refcount_p get_refcount(rc_ref ref)
+static inline refcount_p get_refcount(rc_ptr ref)
 {
     refcount_p result = NULL;
 
-    switch(get_ref_type_unsafe(ref)) {
+    switch(rc_get_ref_type(ref)) {
         case REF_STRONG:
             /* strong ref. */
-            result = container_of(ref.counter, struct refcount_t, strong);
+            result = container_of(ref, struct refcount_t, strong);
             break;
         case REF_WEAK:
             /* weak ref. */
-            result = container_of(ref.counter, struct refcount_t, weak);
+            result = container_of(ref, struct refcount_t, weak);
             break;
         default:
             /* REF_NULL or unknown. */
@@ -99,6 +80,20 @@ static inline refcount_p get_refcount(rc_ref ref)
 
 
 
+
+rc_ref_type rc_get_ref_type(rc_ptr ref)
+{
+    if(!ref) {
+        return REF_NULL;
+    } else if(*(ref) & 0x01) {
+        return REF_WEAK;
+    } else {
+        return REF_STRONG;
+    }
+}
+
+
+
 /*
  * rc_make_ref
  *
@@ -106,10 +101,9 @@ static inline refcount_p get_refcount(rc_ref ref)
  * reference to the data.
  */
 
-rc_ref rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *))
+rc_ptr rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *))
 {
     refcount_p rc = NULL;
-    rc_ref result = RC_REF_NULL;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
@@ -118,7 +112,7 @@ rc_ref rc_make_ref_impl(const char *func, int line_num, void *data, void (*clean
     rc = mem_alloc(sizeof(struct refcount_t));
     if(!rc) {
         pdebug(DEBUG_WARN,"Unable to allocate refcount struct!");
-        return result;
+        return NULL;
     }
 
     rc->strong = 2;
@@ -131,12 +125,10 @@ rc_ref rc_make_ref_impl(const char *func, int line_num, void *data, void (*clean
     rc->function_name = func;
     rc->line_num = line_num;
 
-    result.counter = &(rc->strong);
-
-    pdebug(DEBUG_DETAIL, "Done");
+    pdebug(DEBUG_INFO, "Done");
 
     /* return the address of the strong count. */
-    return result;
+    return &(rc->strong);
 }
 
 
@@ -151,16 +143,16 @@ rc_ref rc_make_ref_impl(const char *func, int line_num, void *data, void (*clean
  * my_struct->some_field_ref = rc_strong(ref);
  */
 
-rc_ref rc_strong_impl(const char *func, int line_num, rc_ref ref)
+rc_ptr rc_strong_impl(const char *func, int line_num, rc_ptr ref)
 {
     refcount_p rc = NULL;
     int strong = 0;
     int weak = 0;
-    rc_ref result = RC_REF_NULL;
+    rc_ptr result = NULL;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
-    if(!ref.counter) {
+    if(!ref) {
         pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
         return result;
     }
@@ -177,22 +169,22 @@ rc_ref rc_strong_impl(const char *func, int line_num, rc_ref ref)
         ; /* do nothing, just spin */
     }
 
-    if(rc->strong > 0) {
-        rc->strong += 2;
-        result.counter = &(rc->strong);
-    } else {
-        // the reference was bad!
-        pdebug(DEBUG_DETAIL,"Attempt to get strong reference on already invalid reference.");
-        rc->strong = 0;
-    }
+        if(rc->strong > 0) {
+            rc->strong += 2;
+            result = &(rc->strong);
+        } else {
+            // the reference was bad!
+            pdebug(DEBUG_DETAIL,"Attempt to get strong reference on already invalid reference.");
+            rc->strong = 0;
+        }
 
-    strong = rc->strong;
-    weak = rc->weak;
+        strong = rc->strong;
+        weak = rc->weak;
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
 
-    if(!result.counter) {
+    if(!result) {
         pdebug(DEBUG_DETAIL,"Invalid ref!  Unable to take strong reference.");
     } else {
         pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
@@ -214,16 +206,16 @@ rc_ref rc_strong_impl(const char *func, int line_num, rc_ref ref)
  * my_struct->some_field_ref = rc_weak(ref);
  */
 
-rc_ref rc_weak_impl(const char *func, int line_num, rc_ref ref)
+rc_ptr rc_weak_impl(const char *func, int line_num, rc_ptr ref)
 {
     refcount_p rc = NULL;
     int strong = 0;
     int weak = 0;
-    rc_ref result = RC_REF_NULL;
+    rc_ptr result = NULL;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
-    if(!ref.counter) {
+    if(!ref) {
         pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
         return result;
     }
@@ -240,22 +232,22 @@ rc_ref rc_weak_impl(const char *func, int line_num, rc_ref ref)
         ; /* do nothing, just spin */
     }
 
-    if(rc->strong > 0) {
-        rc->weak += 2;
-        result.counter = &(rc->weak);
-    } else {
-        /* the reference was bad! */
-        pdebug(DEBUG_DETAIL,"Attempt to get weak reference on already invalid reference.");
-        rc->strong = 0;
-    }
+        if(rc->strong > 0) {
+            rc->weak += 2;
+            result = &(rc->weak);
+        } else {
+            /* the reference was bad! */
+            pdebug(DEBUG_DETAIL,"Attempt to get weak reference on already invalid reference.");
+            rc->strong = 0;
+        }
 
-    strong = rc->strong;
-    weak = rc->weak;
+        strong = rc->strong;
+        weak = rc->weak;
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
 
-    if(!result.counter) {
+    if(!result) {
         pdebug(DEBUG_DETAIL,"Invalid ref!  Unable to take strong reference.");
     } else {
         pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
@@ -272,32 +264,32 @@ rc_ref rc_weak_impl(const char *func, int line_num, rc_ref ref)
  * passed pointer.   Either way, a NULL is returned.
  *
  * This is for usage like:
- * my_struct->some_field = rc_dec(rc_obj);
+ * my_struct->some_field = rc_release(rc_obj);
  *
  * Note that the clean up function _MUST_ free the data pointer
  * passed to it.   It must clean up anything referenced by that data,
- * and the block itself using rc_free();
+ * and the block itself using mem_free() or the appropriate function;
  */
 
-rc_ref rc_release_impl(const char *func, int line_num, rc_ref ref)
+rc_ptr rc_release_impl(const char *func, int line_num, rc_ptr ref)
 {
     refcount_p rc = NULL;
     int strong = 0;
     int weak = 0;
-    ref_type rc_type;
+    int invalid = 0;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
-    if(!ref.counter) {
-        pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
-        return RC_REF_NULL;
+    if(!ref) {
+        pdebug(DEBUG_WARN,"Null reference passed!");
+        return NULL;
     }
 
     rc = get_refcount(ref);
 
     if(!rc) {
         pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
-        return RC_REF_NULL;
+        return NULL;
     }
 
     /* loop until we get the lock */
@@ -305,26 +297,35 @@ rc_ref rc_release_impl(const char *func, int line_num, rc_ref ref)
         ; /* do nothing, just spin */
     }
 
-    rc_type = get_ref_type_unsafe(ref);
-    if(rc_type == REF_STRONG) {
-        if(rc->strong > 0) {
-            rc->strong -= 2;
-            strong = rc->strong;
-        } else {
-            /* oops, already zeroed out!  This is a bug in the calling logic! */
-            pdebug(DEBUG_WARN,"Strong reference count already zero!");
-            strong = rc->strong = 0;
+        switch(rc_get_ref_type(ref)) {
+            case REF_STRONG:
+                if(rc->strong > 0) {
+                    rc->strong -= 2;
+                } else {
+                    /* oops, already zeroed out!  This is a bug in the calling logic! */
+                    pdebug(DEBUG_WARN,"Strong reference count already zero!");
+                    rc->strong = 0;
+                }
+                break;
+
+            case REF_WEAK:
+                if(rc->weak > 1) {
+                    rc->weak -= 2;
+                } else {
+                    /* oops, already zeroed out!  This is a bug in the calling logic! */
+                    pdebug(DEBUG_WARN,"Weak reference count already zero!");
+                    rc->weak = 1;
+                }
+                break;
+
+            default:
+                pdebug(DEBUG_ERROR,"Malformed reference!  Not NULL, but not valid!");
+                invalid = 1;
+                break;
         }
-    } else {
-        if(rc->weak > 1) {
-            rc->weak -= 2;
-            weak = rc->weak;
-        } else {
-            /* oops, already zeroed out!  This is a bug in the calling logic! */
-            pdebug(DEBUG_WARN,"Weak reference count already zero!");
-            weak = rc->weak = 1;
-        }
-    }
+
+        strong = rc->strong;
+        weak = rc->weak;
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
@@ -332,7 +333,7 @@ rc_ref rc_release_impl(const char *func, int line_num, rc_ref ref)
     pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
 
     /* clean up only if both strong and weak count are zero. */
-    if(strong <= 0 && weak <= 1) {
+    if(!invalid && strong <= 0 && weak <= 1) {
         pdebug(DEBUG_DETAIL,"Calling cleanup function.");
 
         rc->cleanup_func(rc->data);
@@ -341,12 +342,12 @@ rc_ref rc_release_impl(const char *func, int line_num, rc_ref ref)
         mem_free(rc);
     }
 
-    return RC_REF_NULL;
+    return NULL;
 }
 
 
 
-void *rc_deref_impl(const char *func, int line_num, rc_ref ref)
+void *rc_deref_impl(const char *func, int line_num, rc_ptr ref)
 {
     refcount_p rc = NULL;
     int strong = 0;
@@ -355,7 +356,7 @@ void *rc_deref_impl(const char *func, int line_num, rc_ref ref)
 
     pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
 
-    if(!ref.counter) {
+    if(!ref) {
         pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
         return result;
     }
@@ -372,12 +373,12 @@ void *rc_deref_impl(const char *func, int line_num, rc_ref ref)
         ; /* do nothing, just spin */
     }
 
-    strong = rc->strong;
-    weak = rc->weak;
+        strong = rc->strong;
+        weak = rc->weak;
 
-    if(strong > 0) {
-        result = rc->data;
-    }
+        if(strong > 0) {
+            result = rc->data;
+        }
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
@@ -387,7 +388,7 @@ void *rc_deref_impl(const char *func, int line_num, rc_ref ref)
     if(result) {
         pdebug(DEBUG_SPEW,"Valid reference, returning data pointer.");
     } else {
-        pdebug(DEBUG_DETAIL,"Invalid reference, returning NULL pointer.");
+        pdebug(DEBUG_INFO,"Invalid reference, returning NULL pointer.");
     }
 
     return result;

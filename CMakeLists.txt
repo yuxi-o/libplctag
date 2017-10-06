@@ -53,6 +53,7 @@ set ( lib_SRC_PATH "${base_SRC_PATH}/lib" )
 set ( protocol_SRC_PATH "${base_SRC_PATH}/protocols" )
 set ( ab_SRC_PATH "${protocol_SRC_PATH}/ab" )
 set ( util_SRC_PATH "${base_SRC_PATH}/util" )
+set ( test_SRC_PATH "${base_SRC_PATH}/tests" )
 set ( example_SRC_PATH "${base_SRC_PATH}/examples" )
 
 # OS-specific files for the platform code.
@@ -179,6 +180,30 @@ if (WIN32)
     target_link_libraries(plctag ws2_32)
 endif()
 
+#
+# Tests
+#
+
+# add the tests
+if (UNIX)
+    set ( test_PROGRAMS #test_vector
+                        stress_api_lock
+                        stress_test )
+
+    set ( test_LIBRARIES plctag pthread )
+endif()
+
+foreach ( tst ${test_PROGRAMS} )
+    set_source_files_properties("${test_SRC_PATH}/${tst}.c" PROPERTIES COMPILE_FLAGS ${BASE_C_FLAGS})
+    add_executable( ${tst} "${test_SRC_PATH}/${tst}.c" )
+    target_link_libraries(${tst} ${test_LIBRARIES} )
+endforeach(tst)
+
+
+#
+# Examples
+#
+
 # add the examples
 if (UNIX)
     set ( example_PROGRAMS async
@@ -191,8 +216,6 @@ if (UNIX)
                            simple
                            simple_dual
                            slc500
-                           stress_api_lock
-                           stress_test
                            string
                            test_special
                            toggle_bool

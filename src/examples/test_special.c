@@ -21,8 +21,7 @@
 
 #include <stdio.h>
 #include "../lib/libplctag.h"
-#include "utils.h"
-
+#include <platform.h>
 
 
 void test_version(void)

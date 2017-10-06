@@ -65,35 +65,6 @@ static volatile uint32_t thread_num = 1;
 
 static THREAD_LOCAL uint32_t this_thread_num = 0;
 
-#define MAX_CALL_DEPTH (64)
-static THREAD_LOCAL int call_depth = 0;
-struct call_entry { const char *func; int line_num; };
-static THREAD_LOCAL struct call_entry call_stack[MAX_CALL_DEPTH + 1] = {0,};
-
-
-static void check_function(const char *func, int line_num)
-{
-    int index = 0;
-
-    /* check to see if the function is already on the stack. */
-    for(index = call_depth-1; index >= 0; index--) {
-        if(str_cmp(func, call_stack[index].func) == 0) {
-            break;
-        }
-    }
-
-    if(index >= 0) {
-        call_depth = index+1;
-    } else {
-        /* new call */
-        if(call_depth < MAX_CALL_DEPTH) {
-            call_stack[call_depth].func = func;
-            call_stack[call_depth].line_num = line_num;
-            call_depth++;
-        }
-    }
-}
-
 
 static uint32_t get_thread_id()
 {
@@ -155,11 +126,7 @@ extern void pdebug_impl(const char *func, int line_num, int debug_level, const c
     va_list va;
     char output[2048];
     char prefix[48]; /* MAGIC */
-    char call_depth_pad[(MAX_CALL_DEPTH * 2) + 1];
     int prefix_size;
-
-    /* see whether we called a new function or dropped back into an old one.  */
-    check_function(func, line_num);
 
     /* build the prefix */
     prefix_size = make_prefix(prefix,(int)sizeof(prefix));  /* don't exceed a size that int can express! */
@@ -168,15 +135,8 @@ extern void pdebug_impl(const char *func, int line_num, int debug_level, const c
         return;
     }
 
-    /* build the call depth padding. */
-    for(int i=0; i < call_depth; i++) {
-        call_depth_pad[i*2] = '*';
-        call_depth_pad[(i*2) + 1] = '*';
-        call_depth_pad[(i*2) + 2] = 0;
-    }
-
     /* create the output string template */
-    snprintf(output, sizeof(output),"%s %s %s %s:%d %s\n",prefix, debug_level_name[debug_level], call_depth_pad, func, line_num, templ);
+    snprintf(output, sizeof(output),"%s %s %s:%d %s\n",prefix, debug_level_name[debug_level], func, line_num, templ);
 
     /* make sure it is zero terminated */
     output[sizeof(output)-1] = 0;

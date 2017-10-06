@@ -28,7 +28,7 @@
 
 
 struct vector_t {
-    rc_ref *data;
+    rc_ptr *data;
     int len;
     int capacity;
     int max_inc;
@@ -43,10 +43,10 @@ static void vector_destroy(void *data);
 static int ensure_capacity(vector_p vec, int capacity);
 
 
-vector_ref vector_create(int capacity, int max_inc)
+rc_vector vector_create(int capacity, int max_inc)
 {
     vector_p vec = NULL;
-    vector_ref result = RC_VECTOR_NULL;
+    rc_vector result = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
@@ -70,7 +70,7 @@ vector_ref vector_create(int capacity, int max_inc)
     vec->capacity = capacity;
     vec->max_inc = max_inc;
 
-    vec->data = mem_alloc(capacity * sizeof(rc_ref));
+    vec->data = mem_alloc(capacity * sizeof(rc_ptr));
     if(!vec->data) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for vector data!");
         vector_destroy(vec);
@@ -78,8 +78,8 @@ vector_ref vector_create(int capacity, int max_inc)
     }
 
     /* make a ref counted wrapper */
-    result = RC_CAST(vector_ref, rc_make_ref(vec, vector_destroy));
-    if(!rc_deref(result)) {
+    result = rc_make_ref(vec, vector_destroy);
+    if(!result) {
         pdebug(DEBUG_WARN,"Unable to create ref wrapper!");
         vector_destroy(vec);
     }
@@ -91,7 +91,7 @@ vector_ref vector_create(int capacity, int max_inc)
 
 
 
-int vector_length(vector_ref vec_ref)
+int vector_length(rc_vector vec_ref)
 {
     int len;
     vector_p vec;
@@ -99,7 +99,7 @@ int vector_length(vector_ref vec_ref)
     pdebug(DEBUG_DETAIL,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!(vec = rc_deref(RC_CAST(rc_ref, vec_ref)))) {
+    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -113,7 +113,7 @@ int vector_length(vector_ref vec_ref)
 
 
 
-int vector_put_impl(vector_ref vec_ref, int index, rc_ref data_ref)
+int vector_put(rc_vector vec_ref, int index, rc_ptr data_ref)
 {
     vector_p vec;
     int rc = PLCTAG_STATUS_OK;
@@ -121,7 +121,7 @@ int vector_put_impl(vector_ref vec_ref, int index, rc_ref data_ref)
     pdebug(DEBUG_INFO,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!(vec = rc_deref(vec_ref))) {
+    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
        pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -140,7 +140,7 @@ int vector_put_impl(vector_ref vec_ref, int index, rc_ref data_ref)
     /* clear any references to existing data. */
     rc_release(vec->data[index]);
 
-    /* acquire a reference to the new data. */
+    /* reference the new data. */
     vec->data[index] = data_ref;
 
     /* adjust the length, if needed */
@@ -154,21 +154,21 @@ int vector_put_impl(vector_ref vec_ref, int index, rc_ref data_ref)
 }
 
 
-rc_ref vector_get(vector_ref vec_ref, int index)
+rc_ptr vector_get(rc_vector vec_ref, int index)
 {
     vector_p vec;
 
     pdebug(DEBUG_INFO,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!(vec = rc_deref(vec_ref))) {
+    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
-        return RC_REF_NULL;
+        return NULL;
     }
 
     if(index < 0 || index >= vec->len) {
         pdebug(DEBUG_WARN,"Index is out of bounds!");
-        return RC_REF_NULL;
+        return NULL;
     }
 
     pdebug(DEBUG_INFO,"Done");
@@ -177,32 +177,32 @@ rc_ref vector_get(vector_ref vec_ref, int index)
 }
 
 
-rc_ref vector_remove(vector_ref vec_ref, int index)
+rc_ptr vector_remove(rc_vector vec_ref, int index)
 {
     vector_p vec;
-    rc_ref result = RC_REF_NULL;
+    rc_ptr result = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!(vec = rc_deref(vec_ref))) {
+    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
-        return RC_REF_NULL;
+        return NULL;
     }
 
     if(index < 0 || index >= vec->len) {
         pdebug(DEBUG_WARN,"Index is out of bounds!");
-        return RC_REF_NULL;
+        return NULL;
     }
 
     /* get the value in this slot before we overwrite it. */
     result = vec->data[index];
 
     /* move the rest of the data over this. */
-    mem_move(&vec->data[index], &vec->data[index+1], sizeof(rc_ref) * (vec->len - index - 1));
+    mem_move(&vec->data[index], &vec->data[index+1], sizeof(rc_ptr) * (vec->len - index - 1));
 
     /* make sure that we do not have bad data hanging around. */
-    vec->data[vec->len - 1] = RC_REF_NULL;
+    vec->data[vec->len - 1] = NULL;
 
     /* adjust the length to the new size */
     vec->len--;
@@ -246,7 +246,7 @@ void vector_destroy(void *data)
 int ensure_capacity(vector_p vec, int capacity)
 {
     int new_inc = 0;
-    rc_ref *new_data = NULL;
+    rc_ptr *new_data = NULL;
 
     if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
@@ -275,13 +275,13 @@ int ensure_capacity(vector_p vec, int capacity)
     }
 
     /* allocate the new data area */
-    new_data = (rc_ref *)mem_alloc(sizeof(rc_ref) * (vec->capacity + new_inc));
+    new_data = (rc_ptr *)mem_alloc(sizeof(rc_ptr) * (vec->capacity + new_inc));
     if(!new_data) {
         pdebug(DEBUG_ERROR,"Unable to allocate new data area!");
         return PLCTAG_ERR_NO_MEM;
     }
 
-    mem_copy(new_data, vec->data, vec->capacity * sizeof(rc_ref));
+    mem_copy(new_data, vec->data, vec->capacity * sizeof(rc_ptr));
 
     mem_free(vec->data);
 

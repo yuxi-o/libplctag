@@ -32,13 +32,13 @@ typedef enum { WAITING, RUNNING, DEAD } pt_state;
 struct pt_entry_t {
     pt_state state;
     int pt_line;
-    rc_ref arg_ref;
+    rc_ptr arg_ref;
     pt_func func;
 };
 
 typedef struct pt_entry_t *pt_entry_p;
 
-static volatile vector_ref pt_list = {0,};
+static volatile rc_vector pt_list = {0,};
 
 /* global PT mutex protecting the PT list. */
 static volatile mutex_p global_pt_mut = NULL;
@@ -80,7 +80,7 @@ int pt_service_init(void)
 
     /* create the vector in which we will have the PTs stored. */
     pt_list = vector_create(100, 50);
-    if(!rc_deref(pt_list)) {
+    if(!pt_list || !rc_deref(pt_list)) {
         pdebug(DEBUG_ERROR,"Unable to allocate a vector!");
         return PLCTAG_ERR_CREATE;
     }
@@ -127,9 +127,9 @@ void pt_service_teardown(void)
 
 
 
-pt_ref pt_create(pt_func func, rc_ref arg_ref)
+rc_protothread pt_create(pt_func func, rc_ptr arg_ref)
 {
-    pt_ref result = RC_PT_NULL;
+    rc_protothread result = NULL;
     pt_entry_p entry = mem_alloc(sizeof(struct pt_entry_t));
 
     if(!entry) {
@@ -141,9 +141,10 @@ pt_ref pt_create(pt_func func, rc_ref arg_ref)
     entry->arg_ref = arg_ref;
     entry->func = func;
 
-    result = RC_CAST(pt_ref, rc_make_ref(entry, pt_entry_destroy));
+    result = rc_make_ref(entry, pt_entry_destroy);
 
-    if(!rc_deref(result)) {
+    if(!result || !rc_deref(result)) {
+        pdebug(DEBUG_WARN,"Unable to make PT entry!");
         mem_free(entry);
         return result;
     }
@@ -153,7 +154,7 @@ pt_ref pt_create(pt_func func, rc_ref arg_ref)
         if(vector_put(pt_list, vector_length(pt_list), rc_weak(result)) != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_ERROR,"Unable to insert new protothread into list!");
             rc_release(result);
-            result = RC_PT_NULL;
+            result = NULL;
         }
     }
 
@@ -184,7 +185,7 @@ void* pt_runner(void* not_used)
             /* find a protothread that is ready to run. */
             critical_block(global_pt_mut) {
                 for(int i=index; i < vector_length(pt_list); i++) {
-                    pt_ref pt_tmp = RC_CAST(pt_ref,vector_get(pt_list,i));
+                    rc_protothread pt_tmp = vector_get(pt_list,i);
 
                     /* if it is dead or an invalid reference, then remove it. */
                     if(!(pt = rc_deref(pt_tmp)) || pt->state == DEAD) {
@@ -234,10 +235,11 @@ void pt_entry_destroy(void *arg)
 {
     pt_entry_p entry = arg;
 
-    if(!arg) {
+    if(!entry) {
         pdebug(DEBUG_WARN,"Null pointer passed in!");
         return;
     }
 
     rc_release(entry->arg_ref);
+    mem_free(entry);
 }

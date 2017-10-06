@@ -70,18 +70,18 @@
 #define PT_WAIT_WHILE(cond) do {*pt_line = __LINE__; case __LINE__: if((cond)) return PT_RESUME; } while(0)
 #define PT_WAIT_UNTIL(cond) do {*pt_line = __LINE__; case __LINE__: if(!(cond)) return PT_RESUME; } while(0)
 
-typedef int (*pt_func)(int *pt_line, rc_ref arg_ref);
 
-RC_MAKE_TYPE(pt_ref);
+typedef rc_ptr rc_protothread;
 
-extern pt_ref pt_create(pt_func func, rc_ref arg_ref);
+typedef int (*pt_func)(int *pt_line, rc_ptr arg_ref);
+
+extern rc_protothread pt_create(pt_func func, rc_ptr arg_ref);
 
 
 /* needed for set up of the PT service */
 extern int pt_service_init(void);
 extern void pt_service_teardown(void);
 
-#define RC_PT_NULL (RC_CAST(pt_ref, RC_REF_NULL))
 
 
 #endif

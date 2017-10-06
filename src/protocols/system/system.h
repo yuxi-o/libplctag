@@ -26,6 +26,6 @@
 #include <platform.h>
 #include <lib/lib.h>
 
-extern impl_tag_ref system_tag_create(attr attribs);
+extern rc_impl_tag system_tag_create(attr attribs);
 
 #endif

@@ -31,20 +31,16 @@
 #include <util/refcount.h>
 
 
+typedef rc_ptr rc_vector;
 
-RC_MAKE_TYPE(vector_ref);
 
-extern vector_ref vector_create(int capacity, int max_inc);
-extern int vector_length(vector_ref vec);
 
-#define vector_put(vec, index, ref) vector_put_impl(vec, index, RC_CAST(rc_ref,ref))
-extern int vector_put_impl(vector_ref vec, int index, rc_ref ref);
+extern rc_vector vector_create(int capacity, int max_inc);
+extern int vector_length(rc_vector vec);
+extern int vector_put(rc_vector vec, int index, rc_ptr ref);
+extern rc_ptr vector_get(rc_vector vec, int index);
+extern rc_ptr vector_remove(rc_vector vec, int index);
 
-extern rc_ref vector_get(vector_ref vec, int index);
-extern rc_ref vector_remove(vector_ref vec, int index);
-
-//~ #define RC_VECTOR_NULL RC_MAKE_NULL(vector_ref)
-#define RC_VECTOR_NULL (RC_CAST(vector_ref, RC_REF_NULL))
 
 
 #endif

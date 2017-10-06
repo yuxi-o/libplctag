@@ -69,18 +69,13 @@ struct impl_tag_t {
 };
 
 
+typedef rc_ptr rc_impl_tag;
 
-RC_MAKE_TYPE(impl_tag_ref);
-#define RC_TAG_IMPL_NULL RC_MAKE_NULL(impl_tag_ref)
 
 
 /* the following may need to be used where the tag is already mapped or is not yet mapped */
 extern int lib_init(void);
 extern void lib_teardown(void);
-
-//~ extern int plc_tag_abort_mapped(plc_tag_p tag);
-//~ extern int plc_tag_destroy_mapped(plc_tag_p tag);
-//~ extern int plc_tag_status_mapped(plc_tag_p tag);
 
 
 #endif

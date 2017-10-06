@@ -24,16 +24,14 @@
 
 #include <util/vector.h>
 
-RC_MAKE_TYPE(hashtable_ref);
+typedef rc_ptr rc_hashtable;
 
-extern hashtable_ref hashtable_create(int size);
-extern rc_ref hashtable_get(hashtable_ref table, void *key, int key_len);
+extern rc_hashtable hashtable_create(int size);
+extern rc_ptr hashtable_get(rc_hashtable table, void *key, int key_len);
 
-#define hashtable_put(table, key, key_len, data_ref) hashtable_put_impl(table, key, key_len, RC_CAST(rc_ref, data_ref))
-extern int hashtable_put_impl(hashtable_ref table, void *key, int key_len, rc_ref data_ref);
+extern int hashtable_put(rc_hashtable table, void *key, int key_len, rc_ptr data_ref);
 
-extern rc_ref hashtable_remove(hashtable_ref table, void *key, int key_len);
+extern rc_ptr hashtable_remove(rc_hashtable table, void *key, int key_len);
 
-#define RC_HASHTABLE_NULL (RC_CAST(hashtable_ref, RC_REF_NULL))
 
 #endif

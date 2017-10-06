@@ -53,11 +53,11 @@ struct tag_t {
     tag_id id;
     int64_t read_cache_expire_ms;
     int64_t read_cache_duration_ms;
-    impl_tag_ref impl_ref;
+    rc_impl_tag impl_ref;
 };
 
-RC_MAKE_TYPE(tag_ref);
-#define RC_TAG_NULL RC_MAKE_NULL(tag_ref)
+
+typedef rc_ptr rc_tag;
 
 
 
@@ -68,14 +68,14 @@ RC_MAKE_TYPE(tag_ref);
 static lock_t library_initialization_lock = LOCK_INIT;
 static volatile int library_initialized = 0;
 static mutex_p global_library_mutex = NULL;
-static hashtable_ref tags = {0,};
+static rc_hashtable tags = NULL;
 volatile int global_tag_id = 1;
 
 #define MAX_TAG_ID (1000000000)
 
 
 static void tag_destroy(void *arg);
-static int insert_tag(rc_ref tag);
+static int insert_tag(rc_ptr tag);
 static int wait_for_timeout(tag_p tag, int timeout);
 static int initialize_modules(void);
 static void teardown_modules(void);
@@ -162,7 +162,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     int rc = PLCTAG_STATUS_OK;
     int read_cache_ms = 0;
     const char *protocol = NULL;
-    rc_ref t_ref = RC_REF_NULL;
+    rc_ptr t_ref = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
@@ -312,7 +312,7 @@ LIB_EXPORT int plc_tag_lock(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -343,7 +343,7 @@ LIB_EXPORT int plc_tag_unlock(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -377,7 +377,7 @@ LIB_EXPORT int plc_tag_abort(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -413,7 +413,7 @@ LIB_EXPORT int plc_tag_abort(tag_id id)
 LIB_EXPORT int plc_tag_destroy(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -462,7 +462,7 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -533,7 +533,7 @@ LIB_EXPORT int plc_tag_status(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_SPEW, "Starting.");
 
@@ -574,7 +574,7 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -624,7 +624,7 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 {
     int result = 0;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -655,7 +655,7 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset) {
   uint8_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -679,7 +679,7 @@ LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -697,7 +697,7 @@ LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val) {
 LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset) {
   int8_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -721,7 +721,7 @@ LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -743,7 +743,7 @@ LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val) {
 LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset) {
   uint16_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -768,7 +768,7 @@ LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -786,7 +786,7 @@ LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val) {
 LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset) {
   int16_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -811,7 +811,7 @@ LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -833,7 +833,7 @@ LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val) {
 LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset) {
   uint32_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -858,7 +858,7 @@ LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -876,7 +876,7 @@ LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val) {
 LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset) {
   int32_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -901,7 +901,7 @@ LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -921,7 +921,7 @@ LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val) {
 LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset) {
   uint64_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -945,7 +945,7 @@ LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint64(tag_id id, int offset, uint64_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -962,7 +962,7 @@ LIB_EXPORT int plc_tag_set_uint64(tag_id id, int offset, uint64_t val) {
 LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset) {
   int64_t res = 0;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -986,7 +986,7 @@ LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int64(tag_id id, int offset, int64_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
-  rc_ref t_ref;
+  rc_ptr t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1007,7 +1007,7 @@ LIB_EXPORT float plc_tag_get_float32(tag_id id, int offset)
 {
     tag_p tag = NULL;
     float res;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1035,7 +1035,7 @@ LIB_EXPORT int plc_tag_set_float32(tag_id id, int offset, float val)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     LOCK_API {
         impl_tag_p impl = rc_deref(tag->impl_ref);
@@ -1059,7 +1059,7 @@ LIB_EXPORT double plc_tag_get_float64(tag_id id, int offset)
 {
     tag_p tag = NULL;
     double res;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1084,7 +1084,7 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
-    rc_ref t_ref;
+    rc_ptr t_ref;
 
     LOCK_API {
         impl_tag_p impl = rc_deref(tag->impl_ref);
@@ -1124,7 +1124,7 @@ void tag_destroy(void *arg)
  * helper to insert a tag into the global hash table.
  */
 
-int insert_tag(rc_ref tag_ref)
+int insert_tag(rc_ptr tag_ref)
 {
     tag_id id;
 
@@ -1134,7 +1134,7 @@ int insert_tag(rc_ref tag_ref)
         id = global_tag_id;
 
         do {
-            rc_ref tmp;
+            rc_ptr tmp;
 
             /* get a new ID */
             id++;
