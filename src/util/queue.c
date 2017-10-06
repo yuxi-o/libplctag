@@ -28,138 +28,36 @@
 #include <util/vector.h>
 
 
-struct queue_t {
-	vector_p vec;
-};
 
 
 
-static void queue_destroy(void *data);
-
-
-queue_p queue_create(int capacity, int max_inc, rc_ref_type ref_type)
+inline queue_ref queue_create(int capacity, int max_inc)
 {
-	queue_p result = NULL;
-
-	if(capacity <= 0) {
-		pdebug(DEBUG_WARN, "Called with negative capacity!");
-		return NULL;
-	}
-
-	if(max_inc <= 0) {
-		pdebug(DEBUG_WARN, "Called with negative maximum size increment!");
-		return NULL;
-	}
-
-	result = rc_alloc(sizeof(struct queue_t), queue_destroy);
-	if(!result) {
-		pdebug(DEBUG_ERROR,"Unable to allocate memory for queue!");
-		return NULL;
-	}
-
-	result->vec = vector_create(capacity, max_inc, ref_type);
-	if(!result->vec) {
-		pdebug(DEBUG_ERROR,"Unable to allocate memory for queue data!");
-		rc_dec(result);
-		return NULL;
-	}
-
-	return result;
+    return RC_CAST(queue_ref, vector_create(capacity, max_inc));
 }
 
 
 
-int queue_length(queue_p q)
+inline int queue_length(queue_ref q)
 {
-	int len;
-
-	/*
-	 * We grab a strong reference to the queue.   This ensures that it cannot
-	 * disappear out from underneath us.  If that fails (perhaps because there
-	 * are only weak refs), then we punt.
-	 */
-	if(!rc_inc(q)) {
-		pdebug(DEBUG_WARN,"Null pointer or invalid pointer to queue passed!");
-		return PLCTAG_ERR_NULL_PTR;
-	}
-
-	len = vector_length(q->vec);
-
-	/* new we can release the ref */
-	rc_dec(q);
-
-	return len;
+    return vector_length(RC_CAST(vector_ref, q));
 }
 
 
 
-int queue_put(queue_p q, void *data)
+inline int queue_put_impl(queue_ref q, rc_ref data_ref)
 {
-	int rc = PLCTAG_STATUS_OK;
-	
-	/*
-	 * We grab a strong reference to the queue.   This ensures that it cannot
-	 * disappear out from underneath us.  If that fails (perhaps because there
-	 * are only weak refs), then we punt.
-	 */
-	if(!rc_inc(q)) {
-		pdebug(DEBUG_WARN,"Null pointer or invalid pointer to queue passed!");
-		return PLCTAG_ERR_NULL_PTR;
-	}
+    vector_ref vec = RC_CAST(vector_ref, q);
 
-	/* we always add at the end. */
-	rc = vector_put(q->vec, vector_length(q->vec), data);
-
-	rc_dec(q);
-
-	return rc;
+    return vector_put(vec, vector_length(vec), data_ref);
 }
 
 
 
-void *queue_get(queue_p q)
+inline rc_ref queue_get(queue_ref q)
 {
-	void *result = NULL;
-	
-	/*
-	 * We grab a strong reference to the queue.   This ensures that it cannot
-	 * disappear out from underneath us.  If that fails (perhaps because there
-	 * are only weak refs), then we punt.
-	 */
-	if(!rc_inc(q)) {
-		pdebug(DEBUG_WARN,"Null pointer or invalid pointer to queue passed!");
-		return NULL;
-	}
+    vector_ref vec = RC_CAST(vector_ref, q);
 
-	/* pop the first element of the vector out */
-	result = vector_remove(q->vec, 0);
-
-	/* free the reference */
-	rc_dec(q);
-
-	return result;
+    return vector_remove(vec, 0);
 }
-
-
-
-
-/***********************************************************************
- *************** Private Helper Functions ******************************
- **********************************************************************/
-
-
-void queue_destroy(void *data)
-{
-	queue_p q = data;
-
-	/* note, no deref here!   We are called when refs are zero. */
-	if(!q) {
-		pdebug(DEBUG_WARN,"Null pointer to queue passed!");
-		return;
-	}
-
-	/* release the reference to the vector */
-	q->vec = rc_dec(q->vec);
-}
-
 

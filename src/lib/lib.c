@@ -53,47 +53,29 @@ struct tag_t {
     tag_id id;
     int64_t read_cache_expire_ms;
     int64_t read_cache_duration_ms;
-    impl_tag_p impl;
+    impl_tag_ref impl_ref;
 };
 
-
-//~ static tag_p tag_id_to_tag_ptr(plc_tag tag_id);
-//~ static int allocate_new_tag_to_id_mapping(tag_p tag);
-//~ static int release_tag_to_id_mapping(tag_p tag);
-//~ static int api_lock(int index);
-//~ static int api_unlock(int index);
-//~ static int tag_id_to_tag_index(plc_tag tag_id_ptr);
+RC_MAKE_TYPE(tag_ref);
+#define RC_TAG_NULL RC_MAKE_NULL(tag_ref)
 
 
+
+/***********************************************************************
+ ************************* Global Variables ****************************
+ **********************************************************************/
 
 static lock_t library_initialization_lock = LOCK_INIT;
 static volatile int library_initialized = 0;
 static mutex_p global_library_mutex = NULL;
-static hashtable_p tags = NULL;
+static hashtable_ref tags = {0,};
 volatile int global_tag_id = 1;
 
 #define MAX_TAG_ID (1000000000)
 
 
-//~ #define TAG_ID_MASK (0xFFFFFFF)
-//~ #define TAG_INDEX_MASK (0x3FFF)
-//~ #define MAX_TAG_ENTRIES (TAG_INDEX_MASK + 1)
-//~ #define TAG_ID_ERROR INT_MIN
-
-//~ /* these are only internal to the file */
-
-//~ static volatile int next_tag_id = MAX_TAG_ENTRIES;
-//~ static volatile tag_p tag_map[MAX_TAG_ENTRIES + 1] = {0,};
-//~ static volatile mutex_p tag_api_mutex[MAX_TAG_ENTRIES + 1] = {0,};
-
-
-
-#define api_block(tag_id)                                              \
-for(int __sync_flag_api_block_foo_##__LINE__ = 1; __sync_flag_api_block_foo_##__LINE__ ; __sync_flag_api_block_foo_##__LINE__ = 0, api_unlock(tag_id_to_tag_index(tag_id))) for(int __sync_rc_api_block_foo_##__LINE__ = api_lock(tag_id_to_tag_index(tag_id)); __sync_rc_api_block_foo_##__LINE__ == PLCTAG_STATUS_OK && __sync_flag_api_block_foo_##__LINE__ ; __sync_flag_api_block_foo_##__LINE__ = 0)
-
-
 static void tag_destroy(void *arg);
-static int insert_tag(tag_p tag);
+static int insert_tag(rc_ref tag);
 static int wait_for_timeout(tag_p tag, int timeout);
 static int initialize_modules(void);
 static void teardown_modules(void);
@@ -180,6 +162,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     int rc = PLCTAG_STATUS_OK;
     int read_cache_ms = 0;
     const char *protocol = NULL;
+    rc_ref t_ref = RC_REF_NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
@@ -201,7 +184,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     set_debug_level(attr_get_int(attribs, "debug", DEBUG_NONE));
 
     /* create the generic part of the tag. */
-    tag = rc_alloc(sizeof(*tag), tag_destroy);
+    tag = mem_alloc(sizeof(*tag));
     if(!tag) {
         attr_destroy(attribs);
         pdebug(DEBUG_ERROR,"Unable to create tag!");
@@ -212,15 +195,15 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     rc = mutex_create(&tag->api_mut);
     if(rc != PLCTAG_STATUS_OK) {
         attr_destroy(attribs);
-        tag = rc_dec(tag);
-        pdebug(DEBUG_ERROR,"Unable to create internal mutex!");
+        tag_destroy(tag);
+        pdebug(DEBUG_ERROR,"Unable to create API mutex!");
         return rc;
     }
 
     rc = mutex_create(&tag->external_mut);
     if(rc != PLCTAG_STATUS_OK) {
         attr_destroy(attribs);
-        tag = rc_dec(tag);
+        tag_destroy(tag);
         pdebug(DEBUG_ERROR,"Unable to create external mutex!");
         return rc;
     }
@@ -247,21 +230,30 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
         /* Allen-Bradley PLC */
         //tag->impl = ab_create_tag2(attribs);
     } else if(str_cmp_i(protocol, "system") == 0) {
-        tag->impl = system_tag_create(attribs);
+        tag->impl_ref = system_tag_create(attribs);
     }
 
-    if(!tag->impl) {
+    if(!rc_deref(tag->impl_ref)) {
+        attr_destroy(attribs);
+        tag_destroy(tag);
         pdebug(DEBUG_ERROR,"Unable to create tag for protocol %s!",protocol);
-        tag = rc_dec(tag);
+        return PLCTAG_ERR_CREATE;
     }
 
+    /* we do not need these anymore. */
     attr_destroy(attribs);
 
-    /* insert the tag into the tag hashtable. */
-    if(tag) {
-        insert_tag(tag);
+    /* now make a reference count wrapper. */
+    t_ref = rc_make_ref(tag, tag_destroy);
+
+    if(!rc_deref(t_ref)) {
+        tag_destroy(tag);
+        pdebug(DEBUG_ERROR,"Unable to create ref count wrapper for tag!");
+        return PLCTAG_ERR_NO_MEM;
     }
 
+    /* insert the tag into the tag hashtable. */
+    insert_tag(t_ref);
 
     /*
      * if there is a timeout, then loop until we get
@@ -277,9 +269,6 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     if(rc == PLCTAG_STATUS_OK) {
         tag_id tmp = tag->id;
 
-        /* we have a strong ref already in the tags hashtable. */
-        rc_dec(tag);
-
         return tmp;
     } else {
         return rc;
@@ -288,11 +277,15 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
 
 
 #define LOCK_API    critical_block(global_library_mutex) {             \
-        tag = hashtable_get(tags, &id, sizeof(id));                    \
+        t_ref = hashtable_get(tags, &id, sizeof(id));                  \
+        t_ref = rc_strong(t_ref);                                      \
     }                                                                  \
+                                                                       \
+    tag = rc_deref(t_ref);                                             \
                                                                        \
     if(!tag) {                                                         \
         pdebug(DEBUG_WARN,"Tag %d not found", id);                     \
+        rc_release(t_ref);                                             \
         return PLCTAG_ERR_NOT_FOUND;                                   \
     }                                                                  \
                                                                        \
@@ -319,6 +312,7 @@ LIB_EXPORT int plc_tag_lock(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -326,7 +320,7 @@ LIB_EXPORT int plc_tag_lock(tag_id id)
         rc = mutex_lock(tag->external_mut);
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_INFO, "Done.");
 
@@ -349,6 +343,7 @@ LIB_EXPORT int plc_tag_unlock(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -356,7 +351,7 @@ LIB_EXPORT int plc_tag_unlock(tag_id id)
         rc = mutex_unlock(tag->external_mut);
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_INFO, "Done.");
 
@@ -382,16 +377,18 @@ LIB_EXPORT int plc_tag_abort(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
     LOCK_API {
-        if(tag->impl->vtable && tag->impl->vtable->abort) {
-            rc = tag->impl->vtable->abort(tag->impl);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        if(impl && impl->vtable && impl->vtable->abort) {
+            rc = impl->vtable->abort(impl);
         }
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_INFO, "Done.");
 
@@ -416,7 +413,7 @@ LIB_EXPORT int plc_tag_abort(tag_id id)
 LIB_EXPORT int plc_tag_destroy(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
-    tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -435,12 +432,11 @@ LIB_EXPORT int plc_tag_destroy(tag_id id)
      * need to be cleaned up.
      */
     critical_block(global_library_mutex) {
-        tag = hashtable_get(tags, &id, sizeof(id));
-        rc = hashtable_remove(tags, &id, sizeof(id));
+        t_ref = hashtable_remove(tags, &id, sizeof(id));
     }
 
     /* now we are safe to decrement the ref count. */
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_INFO, "Done.");
 
@@ -466,12 +462,13 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
     LOCK_API {
-        /* check for null parts */
-        if(!tag->impl || !tag->impl->vtable || !tag->impl->vtable->start_read) {
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        if(!impl || !impl->vtable || !impl->vtable->start_read) {
             pdebug(DEBUG_WARN, "Tag does not have a read function!");
             rc = PLCTAG_ERR_NOT_IMPLEMENTED;
             break;
@@ -485,7 +482,7 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
         }
 
         /* the protocol implementation does not do the timeout. */
-        rc = tag->impl->vtable->start_read(tag->impl);
+        rc = impl->vtable->start_read(impl);
 
         /* if error, return now */
         if(rc != PLCTAG_STATUS_PENDING && rc != PLCTAG_STATUS_OK) {
@@ -510,7 +507,7 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
         }
     } /* end of api block */
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_INFO, "Done");
 
@@ -536,14 +533,20 @@ LIB_EXPORT int plc_tag_status(tag_id id)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_SPEW, "Starting.");
 
     LOCK_API {
-        rc = tag->impl->vtable->get_status(tag->impl);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        if(impl && impl->vtable && impl->vtable->get_status) {
+            rc = impl->vtable->get_status(impl);
+        } else {
+            rc = PLCTAG_ERR_NULL_PTR;
+        }
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_SPEW, "Done.");
 
@@ -571,19 +574,20 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
     LOCK_API {
-        /* check for null parts */
-        if(!tag->impl->vtable || !tag->impl->vtable->start_write) {
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        if(!impl || !impl->vtable || !impl->vtable->start_write) {
             pdebug(DEBUG_WARN, "Tag does not have a write function!");
             rc = PLCTAG_ERR_NOT_IMPLEMENTED;
             break;
         }
 
         /* the protocol implementation does not do the timeout. */
-        rc = tag->impl->vtable->start_write(tag->impl);
+        rc = impl->vtable->start_write(impl);
 
         /* if error, return now */
         if(rc != PLCTAG_STATUS_PENDING && rc != PLCTAG_STATUS_OK) {
@@ -604,7 +608,7 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
         }
     } /* end of api block */
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     pdebug(DEBUG_INFO, "Done");
 
@@ -620,14 +624,20 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 {
     int result = 0;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     pdebug(DEBUG_INFO, "Starting.");
 
     LOCK_API {
-        result = tag->impl->vtable->get_size(tag->impl);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        if(impl && impl->vtable && impl->vtable->get_size) {
+            result = impl->vtable->get_size(impl);
+        } else {
+            result = PLCTAG_ERR_NULL_PTR;
+        }
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     return result;
 }
@@ -645,12 +655,14 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset) {
   uint8_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (uint8_t)tag->impl->vtable->get_int(tag->impl, offset, 8 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (uint8_t)impl->vtable->get_int(impl, offset, 8 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (uint8_t) tmp;
@@ -659,7 +671,7 @@ LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -667,14 +679,16 @@ LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 8 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 8 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -683,12 +697,14 @@ LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val) {
 LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset) {
   int8_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (int8_t)tag->impl->vtable->get_int(tag->impl, offset, 8 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (int8_t)impl->vtable->get_int(impl, offset, 8 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (int8_t)tmp;
@@ -697,7 +713,7 @@ LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -705,14 +721,16 @@ LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 8 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 8 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -725,12 +743,14 @@ LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val) {
 LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset) {
   uint16_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (uint16_t)tag->impl->vtable->get_int(tag->impl, offset, 16 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (uint16_t)impl->vtable->get_int(impl, offset, 16 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (uint16_t) tmp;
@@ -739,7 +759,7 @@ LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -748,14 +768,16 @@ LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 16 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 16 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -764,12 +786,14 @@ LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val) {
 LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset) {
   int16_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (int16_t)tag->impl->vtable->get_int(tag->impl, offset, 16 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (int16_t)impl->vtable->get_int(impl, offset, 16 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (int16_t) tmp;
@@ -778,7 +802,7 @@ LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -787,14 +811,17 @@ LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
+
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 16 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 16 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -806,12 +833,14 @@ LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val) {
 LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset) {
   uint32_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (uint32_t)tag->impl->vtable->get_int(tag->impl, offset, 32 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (uint32_t)impl->vtable->get_int(impl, offset, 32 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (uint32_t) tmp;
@@ -820,7 +849,7 @@ LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -829,14 +858,16 @@ LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 32 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 32 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -845,12 +876,14 @@ LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val) {
 LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset) {
   int32_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (int32_t)tag->impl->vtable->get_int(tag->impl, offset, 32 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (int32_t)impl->vtable->get_int(impl, offset, 32 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (int32_t) tmp;
@@ -859,7 +892,7 @@ LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -868,14 +901,16 @@ LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 32 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 32 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -886,12 +921,14 @@ LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val) {
 LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset) {
   uint64_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (uint64_t)tag->impl->vtable->get_int(tag->impl, offset, 64 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (uint64_t)impl->vtable->get_int(impl, offset, 64 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (uint64_t) tmp;
@@ -900,7 +937,7 @@ LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -908,14 +945,16 @@ LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_uint64(tag_id id, int offset, uint64_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 64 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 64 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -923,12 +962,14 @@ LIB_EXPORT int plc_tag_set_uint64(tag_id id, int offset, uint64_t val) {
 LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset) {
   int64_t res = 0;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
     int64_t tmp;
-    int rc = (int64_t)tag->impl->vtable->get_int(tag->impl, offset, 64 / 8, & tmp);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = (int64_t)impl->vtable->get_int(impl, offset, 64 / 8, & tmp);
 
     if (rc == PLCTAG_STATUS_OK) {
       res = (int64_t) tmp;
@@ -937,7 +978,7 @@ LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset) {
     }
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return res;
 }
@@ -945,14 +986,16 @@ LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset) {
 LIB_EXPORT int plc_tag_set_int64(tag_id id, int offset, int64_t val) {
   int rc = PLCTAG_STATUS_OK;
   tag_p tag = NULL;
+  rc_ref t_ref;
 
   pdebug(DEBUG_DETAIL, "Starting.");
 
   LOCK_API {
-    rc = tag->impl->vtable->set_int(tag->impl, offset, 64 / 8, (int64_t) val);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    rc = impl->vtable->set_int(impl, offset, 64 / 8, (int64_t) val);
   }
 
-  rc_dec(tag);
+  rc_release(t_ref);
 
   return rc;
 }
@@ -964,12 +1007,14 @@ LIB_EXPORT float plc_tag_get_float32(tag_id id, int offset)
 {
     tag_p tag = NULL;
     float res;
+    rc_ref t_ref;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
     LOCK_API {
         double tmp;
-        int rc = (float)tag->impl->vtable->get_double(tag->impl, offset, 4, &tmp);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        int rc = (float)impl->vtable->get_double(impl, offset, 4, &tmp);
 
         if(rc == PLCTAG_STATUS_OK) {
             res = (float)tmp;
@@ -978,7 +1023,7 @@ LIB_EXPORT float plc_tag_get_float32(tag_id id, int offset)
         }
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);;
 
     return res;
 }
@@ -990,12 +1035,14 @@ LIB_EXPORT int plc_tag_set_float32(tag_id id, int offset, float val)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     LOCK_API {
-        rc = tag->impl->vtable->set_double(tag->impl, offset, 4, (double)val);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        rc = impl->vtable->set_double(impl, offset, 4, (double)val);
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     return rc;
 }
@@ -1012,18 +1059,20 @@ LIB_EXPORT double plc_tag_get_float64(tag_id id, int offset)
 {
     tag_p tag = NULL;
     double res;
+    rc_ref t_ref;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
     LOCK_API {
-        int rc = tag->impl->vtable->get_double(tag->impl, offset, 8, &res);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        int rc = impl->vtable->get_double(impl, offset, 8, &res);
 
         if(rc != PLCTAG_STATUS_OK) {
             res = DBL_MIN;
         }
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);
 
     return res;
 }
@@ -1035,12 +1084,14 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
 {
     int rc = PLCTAG_STATUS_OK;
     tag_p tag = NULL;
+    rc_ref t_ref;
 
     LOCK_API {
-        rc = tag->impl->vtable->set_double(tag->impl, offset, 8, val);
+        impl_tag_p impl = rc_deref(tag->impl_ref);
+        rc = impl->vtable->set_double(impl, offset, 8, val);
     }
 
-    rc_dec(tag);
+    rc_release(t_ref);;
 
     return rc;
 }
@@ -1062,7 +1113,7 @@ void tag_destroy(void *arg)
     if(tag) {
         mutex_destroy(&tag->api_mut);
         mutex_destroy(&tag->external_mut);
-        rc_dec(tag->impl);
+        rc_release(tag->impl_ref);
     }
 }
 
@@ -1072,7 +1123,7 @@ void tag_destroy(void *arg)
  * helper to insert a tag into the global hash table.
  */
 
-int insert_tag(tag_p tag)
+int insert_tag(rc_ref tag_ref)
 {
     tag_id id;
 
@@ -1082,7 +1133,7 @@ int insert_tag(tag_p tag)
         id = global_tag_id;
 
         do {
-            tag_p tmp;
+            rc_ref tmp;
 
             /* get a new ID */
             id++;
@@ -1092,17 +1143,16 @@ int insert_tag(tag_p tag)
             }
 
             tmp = hashtable_get(tags, &id, sizeof(id));
-            if(!tmp) {
+            if(!rc_deref(tmp)) {
+                tag_p tag = rc_deref(tag_ref);
+
                 found = 1;
 
                 global_tag_id = id;
                 tag->id = id;
 
                 /* FIXME - check return code! */
-                hashtable_put(tags, &id, sizeof(id), tag);
-            } else {
-                /* that ID is used. */
-                rc_dec(tmp);
+                hashtable_put(tags, &id, sizeof(id), tag_ref);
             }
         } while(!found);
     }
@@ -1116,10 +1166,11 @@ int insert_tag(tag_p tag)
 int wait_for_timeout(tag_p tag, int timeout)
 {
     int64_t timeout_time = timeout + time_ms();
-    int rc = tag->impl->vtable->get_status(tag->impl);
+    impl_tag_p impl = rc_deref(tag->impl_ref);
+    int rc = impl->vtable->get_status(impl);
 
     while(rc == PLCTAG_STATUS_PENDING && timeout_time > time_ms()) {
-        rc = tag->impl->vtable->get_status(tag->impl);
+        rc = impl->vtable->get_status(impl);
 
         /*
          * terminate early and do not wait again if the
@@ -1189,8 +1240,8 @@ int initialize_modules(void)
 
         pdebug(DEBUG_INFO,"Creating internal tag hashtable.");
         if(rc == PLCTAG_STATUS_OK) {
-            tags = hashtable_create(5, RC_STRONG_REF); /* FIXME - MAGIC */
-            if(!tags) {
+            tags = hashtable_create(5); /* FIXME - MAGIC */
+            if(!rc_deref(tags)) {
                 pdebug(DEBUG_ERROR,"Unable to create internal tag hashtable!");
                 rc = PLCTAG_ERR_CREATE;
             }
@@ -1242,7 +1293,7 @@ void teardown_modules(void)
 
 
     pdebug(DEBUG_INFO,"Releasing internal tag hashtable.");
-    rc_dec(tags);
+    rc_release(tags);
 
     pdebug(DEBUG_INFO,"Destroying global library mutex.");
     if(global_library_mutex) {

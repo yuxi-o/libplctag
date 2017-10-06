@@ -19,17 +19,21 @@
  ***************************************************************************/
 
 #ifndef __UTIL_HASHTABLE_H__
-#define __UTIL_HASHTABLE_H__
+#define __UTIL_HASHTABLE_H__ 1
 
 
 #include <util/vector.h>
 
-typedef struct hashtable_t *hashtable_p;
+RC_MAKE_TYPE(hashtable_ref);
 
-extern hashtable_p hashtable_create(int size, rc_ref_type ref_type);
-extern void *hashtable_get(hashtable_p table, void *key, int key_len);
-extern int hashtable_put(hashtable_p table, void *key, int key_len, void *data);
-extern int hashtable_remove(hashtable_p table, void *key, int key_len);
+extern hashtable_ref hashtable_create(int size);
+extern rc_ref hashtable_get(hashtable_ref table, void *key, int key_len);
 
+#define hashtable_put(table, key, key_len, data_ref) hashtable_put_impl(table, key, key_len, RC_CAST(rc_ref, data_ref))
+extern int hashtable_put_impl(hashtable_ref table, void *key, int key_len, rc_ref data_ref);
+
+extern rc_ref hashtable_remove(hashtable_ref table, void *key, int key_len);
+
+#define RC_HASHTABLE_NULL (RC_CAST(hashtable_ref, RC_REF_NULL))
 
 #endif

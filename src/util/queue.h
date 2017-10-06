@@ -23,20 +23,51 @@
 
 
 /*
- * The elements stored in this queue must be created via rc_alloc.
+ * The elements stored in this queue must be created via rc_make_ref.
  * The queue uses references to keep the memory around.
+ *
+ * This is just an inline wrapper around a vector.
  */
 
 #include <platform.h>
 #include <util/refcount.h>
 
 
-typedef struct queue_t *queue_p;
+RC_MAKE_TYPE(queue_ref);
 
-extern queue_p queue_create(int capacity, int max_inc, rc_ref_type ref_type);
-extern int queue_length(queue_p vec);
-extern int queue_put(queue_p vec, void *data);
-extern void *queue_get(queue_p vec);
+#define RC_QUEUE_NULL RC_MAKE_NULL(queue_ref)
+
+
+inline queue_ref queue_create(int capacity, int max_inc)
+{
+    return RC_CAST(queue_ref, vector_create(capacity, max_inc));
+}
+
+
+
+inline int queue_length(queue_ref q)
+{
+    return vector_length(RC_CAST(vector_ref, q));
+}
+
+
+#define queue_put(q, d) queue_put_impl(q, RC_CAST(rc_ref, d))
+inline int queue_put_impl(queue_ref q, rc_ref data_ref)
+{
+    vector_ref vec = RC_CAST(vector_ref, q);
+
+    return vector_put(vec, vector_length(vec), data_ref);
+}
+
+
+
+inline rc_ref queue_get(queue_ref q)
+{
+    vector_ref vec = RC_CAST(vector_ref, q);
+
+    return vector_remove(vec, 0);
+}
+
 
 
 

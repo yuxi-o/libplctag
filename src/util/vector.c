@@ -28,12 +28,14 @@
 
 
 struct vector_t {
-    rc_ref_type ref_type;
-    void **data;
+    rc_ref *data;
     int len;
     int capacity;
     int max_inc;
 };
+
+
+typedef struct vector_t *vector_p;
 
 
 
@@ -41,39 +43,46 @@ static void vector_destroy(void *data);
 static int ensure_capacity(vector_p vec, int capacity);
 
 
-vector_p vector_create(int capacity, int max_inc, rc_ref_type ref_type)
+vector_ref vector_create(int capacity, int max_inc)
 {
-    vector_p result = NULL;
+    vector_p vec = NULL;
+    vector_ref result = RC_VECTOR_NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
     if(capacity <= 0) {
         pdebug(DEBUG_WARN, "Called with negative capacity!");
-        return NULL;
+        return result;
     }
 
     if(max_inc <= 0) {
         pdebug(DEBUG_WARN, "Called with negative maximum size increment!");
-        return NULL;
+        return result;
     }
 
-    result = rc_alloc(sizeof(struct vector_t), vector_destroy);
-    if(!result) {
+    vec = mem_alloc(sizeof(struct vector_t));
+    if(!vec) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for vector!");
-        return NULL;
+        return result;
     }
 
-    result->data = mem_alloc(capacity * sizeof(void *));
-    if(!result->data) {
+    vec->len = 0;
+    vec->capacity = capacity;
+    vec->max_inc = max_inc;
+
+    vec->data = mem_alloc(capacity * sizeof(rc_ref));
+    if(!vec->data) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for vector data!");
-        rc_dec(result);
-        return NULL;
+        vector_destroy(vec);
+        return result;
     }
 
-    result->ref_type = ref_type;
-    result->len = 0;
-    result->capacity = capacity;
-    result->max_inc = max_inc;
+    /* make a ref counted wrapper */
+    result = RC_CAST(vector_ref, rc_make_ref(vec, vector_destroy));
+    if(!rc_deref(result)) {
+        pdebug(DEBUG_WARN,"Unable to create ref wrapper!");
+        vector_destroy(vec);
+    }
 
     pdebug(DEBUG_INFO,"Done");
 
@@ -82,26 +91,20 @@ vector_p vector_create(int capacity, int max_inc, rc_ref_type ref_type)
 
 
 
-int vector_length(vector_p vec)
+int vector_length(vector_ref vec_ref)
 {
     int len;
+    vector_p vec;
 
     pdebug(DEBUG_DETAIL,"Starting");
 
-    /*
-     * We grab a strong reference to the vector.   This ensures that it cannot
-     * disappear out from underneath us.  If that fails (perhaps because there
-     * are only weak refs), then we punt.
-     */
-    if(!rc_inc(vec)) {
+    /* check to see if the vector ref is valid */
+    if(!(vec = rc_deref(RC_CAST(rc_ref, vec_ref)))) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
 
     len = vec->len;
-
-    /* new we can release the ref */
-    rc_dec(vec);
 
     pdebug(DEBUG_DETAIL,"Done");
 
@@ -110,48 +113,40 @@ int vector_length(vector_p vec)
 
 
 
-int vector_put(vector_p vec, int index, void *data)
+int vector_put_impl(vector_ref vec_ref, int index, rc_ref data_ref)
 {
+    vector_p vec;
     int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    /*
-     * We grab a strong reference to the vector.   This ensures that it cannot
-     * disappear out from underneath us.  If that fails (perhaps because there
-     * are only weak refs), then we punt.
-     */
-    if(!rc_inc(vec)) {
-        pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
+    /* check to see if the vector ref is valid */
+    if(!(vec = rc_deref(vec_ref))) {
+       pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
 
     if(index < 0) {
-        rc_dec(vec);
         pdebug(DEBUG_WARN,"Index is negative!");
         return PLCTAG_ERR_OUT_OF_BOUNDS;
     }
 
     rc = ensure_capacity(vec, index+1);
     if(rc != PLCTAG_STATUS_OK) {
-        rc_dec(vec);
         pdebug(DEBUG_WARN,"Unable to ensure capacity!");
         return rc;
     }
 
     /* clear any references to existing data. */
-    vec->data[index] = (vec->ref_type == RC_STRONG_REF ? rc_dec(vec->data[index]) : rc_weak_dec(vec->data[index]));
+    rc_release(vec->data[index]);
 
     /* acquire a reference to the new data. */
-    vec->data[index] = (vec->ref_type == RC_STRONG_REF ? rc_inc(data) : rc_weak_inc(data));
+    vec->data[index] = data_ref;
 
     /* adjust the length, if needed */
     if(index >= vec->len) {
         vec->len = index+1;
     }
-
-    /* now free the reference as we are done modifying the vector's memory */
-    rc_dec(vec);
 
     pdebug(DEBUG_INFO,"Done");
 
@@ -159,82 +154,58 @@ int vector_put(vector_p vec, int index, void *data)
 }
 
 
-void *vector_get(vector_p vec, int index)
+rc_ref vector_get(vector_ref vec_ref, int index)
 {
-    void *result = NULL;
+    vector_p vec;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    /*
-     * We grab a strong reference to the vector.   This ensures that it cannot
-     * disappear out from underneath us.  If that fails (perhaps because there
-     * are only weak refs), then we punt.
-     */
-    if(!rc_inc(vec)) {
+    /* check to see if the vector ref is valid */
+    if(!(vec = rc_deref(vec_ref))) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
-        return NULL;
+        return RC_REF_NULL;
     }
 
     if(index < 0 || index >= vec->len) {
-        rc_dec(vec);
         pdebug(DEBUG_WARN,"Index is out of bounds!");
-        return NULL;
+        return RC_REF_NULL;
     }
-
-    /*
-     * This line does several things:
-     * 1. if the reference was weak and invalid, it sets it to NULL.
-     * 2. if the reference was valid, it gets a strong reference to it.
-     * Because of 1, it cleans up any invalid references as we get them. This
-     * sets the slot to NULL as a side effect.
-     */
-    result = vec->data[index] = rc_inc(vec->data[index]);
-
-    /* free the reference to the vector itself. */
-    rc_dec(vec);
 
     pdebug(DEBUG_INFO,"Done");
 
-    return result;
+    return vec->data[index];
 }
 
 
-void *vector_remove(vector_p vec, int index)
+rc_ref vector_remove(vector_ref vec_ref, int index)
 {
-    void *result = NULL;
+    vector_p vec;
+    rc_ref result = RC_REF_NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    /*
-     * We grab a strong reference to the vector.   This ensures that it cannot
-     * disappear out from underneath us.  If that fails (perhaps because there
-     * are only weak refs), then we punt.
-     */
-    if(!rc_inc(vec)) {
+    /* check to see if the vector ref is valid */
+    if(!(vec = rc_deref(vec_ref))) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
-        return NULL;
+        return RC_REF_NULL;
     }
 
     if(index < 0 || index >= vec->len) {
-        rc_dec(vec);
         pdebug(DEBUG_WARN,"Index is out of bounds!");
-        return NULL;
+        return RC_REF_NULL;
     }
 
-    /* We do not need to get a new reference.   This has move semantics.  */
+    /* get the value in this slot before we overwrite it. */
     result = vec->data[index];
 
     /* move the rest of the data over this. */
-    mem_move(&vec->data[index], &vec->data[index+1], sizeof(void*) * (vec->len - index - 1));
+    mem_move(&vec->data[index], &vec->data[index+1], sizeof(rc_ref) * (vec->len - index - 1));
 
     /* make sure that we do not have bad data hanging around. */
-    vec->data[vec->len - 1] = NULL;
+    vec->data[vec->len - 1] = RC_REF_NULL;
 
     /* adjust the length to the new size */
     vec->len--;
-
-    /* now that we are done mutating the vector, free the reference */
-    rc_dec(vec);
 
     pdebug(DEBUG_INFO,"Done");
 
@@ -252,7 +223,6 @@ void vector_destroy(void *data)
 {
     vector_p vec = data;
 
-    /* note, no deref here!   We are called when refs are zero. */
     if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer to vector passed!");
         return;
@@ -260,12 +230,14 @@ void vector_destroy(void *data)
 
     /* clear all the data out */
     for(int i=0; i < vec->len; i++) {
-        vec->data[i] = (vec->ref_type == RC_STRONG_REF ? rc_dec(vec->data[i]) : rc_weak_dec(vec->data[i]));
+        vec->data[i] = rc_release(vec->data[i]);
     }
 
     mem_free(vec->data);
 
     vec->data = NULL;
+
+    mem_free(vec);
 }
 
 
@@ -274,13 +246,9 @@ void vector_destroy(void *data)
 int ensure_capacity(vector_p vec, int capacity)
 {
     int new_inc = 0;
-    void **new_data = NULL;
+    rc_ref *new_data = NULL;
 
-    /* this is a bit tricky, get a strong reference to the vector.
-     * If we get a NULL back, then we probably only had weak refs to it
-     * and we should punt because the vector is gone.
-     */
-    if(!rc_inc(vec)) {
+    if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -288,7 +256,6 @@ int ensure_capacity(vector_p vec, int capacity)
     /* is there anything to do? */
     if(capacity <= vec->capacity) {
         /* release the reference */
-        rc_dec(vec);
         return PLCTAG_STATUS_OK;
     }
 
@@ -308,17 +275,18 @@ int ensure_capacity(vector_p vec, int capacity)
     }
 
     /* allocate the new data area */
-    new_data = (void **)mem_alloc(vec->capacity + new_inc);
+    new_data = (rc_ref *)mem_alloc(sizeof(rc_ref) * (vec->capacity + new_inc));
     if(!new_data) {
         pdebug(DEBUG_ERROR,"Unable to allocate new data area!");
         return PLCTAG_ERR_NO_MEM;
     }
 
-    mem_copy(new_data, vec->data, vec->capacity);
+    mem_copy(new_data, vec->data, vec->capacity * sizeof(rc_ref));
 
     mem_free(vec->data);
 
     vec->data = new_data;
+
     vec->capacity += new_inc;
 
     return PLCTAG_STATUS_OK;

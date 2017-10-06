@@ -29,15 +29,16 @@
 
 typedef enum { WAITING, RUNNING, DEAD } pt_state;
 
-struct pt_entry {
-	pt_state state;
-	int pt_pc;
-    void *args;
+struct pt_entry_t {
+    pt_state state;
+    int pt_line;
+    rc_ref arg_ref;
     pt_func func;
 };
 
+typedef struct pt_entry_t *pt_entry_p;
 
-static volatile vector_p pt_list = NULL;
+static volatile vector_ref pt_list = {0,};
 
 /* global PT mutex protecting the PT list. */
 static volatile mutex_p global_pt_mut = NULL;
@@ -78,16 +79,16 @@ int pt_service_init(void)
     }
 
     /* create the vector in which we will have the PTs stored. */
-    pt_list = vector_create(100, 50, RC_WEAK_REF); /* make it a weak list */
-    if(!pt_list) {
-		pdebug(DEBUG_ERROR,"Unable to allocate a vector!");
-		return PLCTAG_ERR_CREATE;
-	}
+    pt_list = vector_create(100, 50);
+    if(!rc_deref(pt_list)) {
+        pdebug(DEBUG_ERROR,"Unable to allocate a vector!");
+        return PLCTAG_ERR_CREATE;
+    }
 
     /* create the background PT runner thread */
     rc = thread_create((thread_p*)&pt_thread, pt_runner, 32*1024, NULL);
     if(rc != PLCTAG_STATUS_OK) {
-		rc_dec(pt_list);
+        rc_release(pt_list);
         pdebug(DEBUG_INFO,"Unable to create PT runner thread!");
         return rc;
     }
@@ -115,7 +116,7 @@ void pt_service_teardown(void)
 
     pdebug(DEBUG_INFO,"Freeing PT list.");
     /* free the vector of PTs */
-    rc_dec(pt_list);
+    rc_release(pt_list);
 
     pdebug(DEBUG_INFO,"Freeing global PT mutex.");
     /* clean up the mutex */
@@ -126,46 +127,37 @@ void pt_service_teardown(void)
 
 
 
-pt pt_create(pt_func func, void *args)
+pt_ref pt_create(pt_func func, rc_ref arg_ref)
 {
-    struct pt_entry *entry = rc_alloc(sizeof(struct pt_entry), pt_entry_destroy);
+    pt_ref result = RC_PT_NULL;
+    pt_entry_p entry = mem_alloc(sizeof(struct pt_entry_t));
 
     if(!entry) {
         pdebug(DEBUG_ERROR,"Cannot allocate new pt entry!");
-        return NULL;
+        return result;
     }
 
-	entry->state = WAITING;
-    entry->args = rc_inc(args);
+    entry->state = WAITING;
+    entry->arg_ref = arg_ref;
     entry->func = func;
 
-    critical_block(global_pt_mut) {
-		/*
-		 * Note: The "<=" is deliberate here.   If we cannot
-		 * find an empty slot earlier, we will go one past the
-		 * end of the current vector content and place the new
-		 * element there.
-		 *
-		 * FIXME - check if this does not succeed.
-		 */
-		for(int i=0; i <= vector_length(pt_list); i++) {
-			/* this takes a strong reference */
-			struct pt_entry *tmp = vector_get(pt_list, i);
+    result = RC_CAST(pt_ref, rc_make_ref(entry, pt_entry_destroy));
 
-			if(!tmp) {
-				if(vector_put(pt_list, i, entry) != PLCTAG_STATUS_OK) {
-					pdebug(DEBUG_ERROR,"Unable to add new PT entry!");
-					entry = rc_dec(entry);
-				}
-				break;
-			} else {
-				/* release the reference */
-				rc_dec(tmp);
-			}
-		}
+    if(!rc_deref(result)) {
+        mem_free(entry);
+        return result;
     }
 
-    return entry;
+    critical_block(global_pt_mut) {
+        /* just insert at the end.   Insert a weak reference. */
+        if(vector_put(pt_list, vector_length(pt_list), rc_weak(result)) != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_ERROR,"Unable to insert new protothread into list!");
+            rc_release(result);
+            result = RC_PT_NULL;
+        }
+    }
+
+    return result;
 }
 
 
@@ -180,54 +172,50 @@ void* pt_runner(void* not_used)
     pdebug(DEBUG_INFO,"PT Runner starting with arg %p",not_used);
 
     while(!library_terminating) {
-		/* scan over all the entries looking for one that is valid and not running. */
-		for(int index=0; index < vector_length(pt_list); index++) {
-			pt current_pt = NULL;
-			
-			critical_block(global_pt_mut) {
-				/* this gets a strong reference if the reference is valid. */
-				current_pt = vector_get(pt_list, index);
+        /* scan over all the entries looking for one that is valid and not running. */
+        int index = 0;
+        int done = 0;
 
-				/* did we get a valid ref? */
-				if(current_pt) {
-					/* is it ready to run? */
-					if(current_pt->state == WAITING) {
-						/* yes, so mark it as running to prevent other threads from changing it. */
-						current_pt->state = RUNNING;
-					} else {
-						/* no? is it dead? */
-						if(current_pt->state == DEAD) {
-							/* clean it up */
-							vector_put(pt_list, index, NULL);
-						}
+        do {
+            pt_entry_p pt = NULL;
 
-						/* we are done with this one, it is not available for executing. */
-						current_pt = rc_dec(current_pt);
-					}
-				}
-			}
+            done = 1;
 
-			/* if we have a current PT, then it is valid, we have a strong reference to
-			 * it and we are the ones that changed it to RUNNING thus locking it from other
-			 * threads.
-			 */
+            /* find a protothread that is ready to run. */
+            critical_block(global_pt_mut) {
+                for(int i=index; i < vector_length(pt_list); i++) {
+                    pt_ref pt_tmp = RC_CAST(pt_ref,vector_get(pt_list,i));
 
-			if(current_pt) {
-				if(current_pt->func(&current_pt->pt_pc, current_pt->args) == PT_TERMINATE) {
-					current_pt->state = DEAD;
-					/*
-					 * Do not clean this up here.   Do that in the mutex-protected block
-					 * above on the next run.
-					 */
-				}
+                    /* if it is dead or an invalid reference, then remove it. */
+                    if(!(pt = rc_deref(pt_tmp)) || pt->state == DEAD) {
+                        vector_remove(pt_list, i);
+                        rc_release(pt_tmp);
+                        continue;
+                    }
 
-				/* we are done with the reference. */
-				current_pt = rc_dec(current_pt);
-			}
-		}
+                    /* is it ready to run? */
+                    if(pt->state == WAITING) {
+                        /* yes, so mark it as running to prevent other threads from changing it. */
+                        pt->state = RUNNING;
+                        index = i;
+                        done = 0;
+                        break;
+                    }
+                }
+            }
 
-		/* reschedule the CPU. */
-		sleep_ms(1);
+            if(!done) {
+                if(pt->func(&pt->pt_line, pt->arg_ref) == PT_TERMINATE) {
+                    pt->state = DEAD;
+                }
+
+                /* do not rerun the PT again. */
+                index++;
+            }
+        } while(!done);
+
+        /* reschedule the CPU. */
+        sleep_ms(1);
     }
 
     pdebug(DEBUG_DETAIL,"PT Runner thread function exiting.");
@@ -244,12 +232,12 @@ void* pt_runner(void* not_used)
 
 void pt_entry_destroy(void *arg)
 {
-	struct pt_entry *entry = arg;
+    pt_entry_p entry = arg;
 
-	if(!arg) {
-		pdebug(DEBUG_WARN,"Null pointer passed in!");
-		return;
-	}
+    if(!arg) {
+        pdebug(DEBUG_WARN,"Null pointer passed in!");
+        return;
+    }
 
-	entry->args = rc_dec(entry->args);
+    rc_release(entry->arg_ref);
 }

@@ -3,6 +3,9 @@
 #ifndef __MACROS_H__
 #define __MACROS_H__
 
+
+#include <stddef.h>
+
 /*
  * This is a collection of handy macros.
  */
@@ -53,5 +56,10 @@
 /* run action macro against all elements in a list. Run a different macro against the last element. */
 #define FOREACH_LAST(action, action_last, ...) \
    GET_MACRO(__VA_ARGS__,FOREACH_16,FOREACH_15,FOREACH_14,FOREACH_13,FOREACH_12,FOREACH_11,FOREACH_10,FOREACH_9,FOREACH_8,FOREACH_7,FOREACH_6,FOREACH_5,FOREACH_4,FOREACH_3,FOREACH_2,FOREACH_1,)(action,action_last,__VA_ARGS__)
+
+
+
+#define container_of(ptr, type, member) ((type *)((char *)(1 ? (ptr) : &((type *)0)->member) - offsetof(type, member)))
+
 
 #endif

@@ -38,43 +38,6 @@ struct system_tag_t {
 typedef struct system_tag_t *system_tag_p;
 
 
-
-/* we'll need to set these per protocol type.
-
-struct impl_vtable {
-    int (*abort)(impl_tag_p tag);
-    int (*get_status)(impl_tag_p tag);
-    int (*start_read)(impl_tag_p tag);
-    int (*start_write)(impl_tag_p tag);
-
-    int (*get_size)(impl_tag_p tag);
-
-    int8_t (*get_int8)(impl_tag_p tag, int offset);
-    int16_t (*get_int16)(impl_tag_p tag, int offset);
-    int32_t (*get_int32)(impl_tag_p tag, int offset);
-    int64_t (*get_int64)(impl_tag_p tag, int offset);
-    float (*get_float32)(impl_tag_p tag, int offset);
-    double (*get_float64)(impl_tag_p tag, int offset);
-
-    int (*set_int8)(impl_tag_p tag, int offset, int8_t val);
-    int (*set_int16)(impl_tag_p tag, int offset, int16_t val);
-    int (*set_int32)(impl_tag_p tag, int offset, int32_t val);
-    int (*set_int64)(impl_tag_p tag, int offset, int64_t val);
-    int (*set_float32)(impl_tag_p tag, int offset, float val);
-    int (*set_float64)(impl_tag_p tag, int offset, double val);
-};
-
-*
-*/
-
-//~ static int system_tag_abort(plc_tag_p tag);
-//~ static int system_tag_destroy(plc_tag_p tag);
-//~ static int system_tag_read(plc_tag_p tag);
-//~ static int system_tag_status(plc_tag_p tag);
-//~ static int system_tag_write(plc_tag_p tag);
-
-//~ struct tag_vtable_t system_tag_vtable = { system_tag_abort, system_tag_destroy, system_tag_read, system_tag_status, system_tag_write};
-
 static int abort_operation(impl_tag_p tag);
 static int size_debug(impl_tag_p tag);
 static int size_version(impl_tag_p tag);
@@ -117,9 +80,10 @@ struct impl_vtable version_tag_vtable = {abort_operation, size_version, get_stat
 
 
 
-impl_tag_p system_tag_create(attr attribs)
+impl_tag_ref system_tag_create(attr attribs)
 {
     system_tag_p tag = NULL;
+    impl_tag_ref result = RC_TAG_IMPL_NULL;
     const char *name = attr_get_str(attribs, "name", NULL);
 
     pdebug(DEBUG_INFO,"Starting.");
@@ -127,7 +91,7 @@ impl_tag_p system_tag_create(attr attribs)
     /* check the name, if none given, punt. */
     if(!name || str_length(name) < 1) {
         pdebug(DEBUG_ERROR, "System tag name is empty or missing!");
-        return NULL;
+        return result;
     }
 
     pdebug(DEBUG_DETAIL,"Creating special tag %s", name);
@@ -137,11 +101,11 @@ impl_tag_p system_tag_create(attr attribs)
      * we have a vehicle for returning status.
      */
 
-    tag = rc_alloc(sizeof(struct system_tag_t), tag_destroy);
+    tag = mem_alloc(sizeof(struct system_tag_t));
 
     if(!tag) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for system tag!");
-        return NULL;
+        return result;
     }
 
     tag->creation_time = time_ms();
@@ -155,13 +119,19 @@ impl_tag_p system_tag_create(attr attribs)
         tag->base_tag.vtable = &version_tag_vtable;
     } else {
         pdebug(DEBUG_WARN,"Unknown tag %s!",name);
-        rc_dec(tag);
-        return NULL;
+        tag_destroy(tag);
+        return result;
+    }
+
+    result = RC_CAST(impl_tag_ref, rc_make_ref(tag, tag_destroy));
+    if(!rc_deref(result)) {
+        pdebug(DEBUG_ERROR,"Could not make ref from system tag!");
+        tag_destroy(tag);
     }
 
     pdebug(DEBUG_INFO,"Done");
 
-    return (impl_tag_p)tag;
+    return result;
 }
 
 

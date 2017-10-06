@@ -19,7 +19,7 @@
  ***************************************************************************/
 
 #ifndef __UTIL_VECTOR_H__
-#define __UTIL_VECTOR_H__
+#define __UTIL_VECTOR_H__ 1
 
 
 /*
@@ -31,14 +31,20 @@
 #include <util/refcount.h>
 
 
-typedef struct vector_t *vector_p;
 
-extern vector_p vector_create(int capacity, int max_inc, rc_ref_type ref_type);
-extern int vector_length(vector_p vec);
-extern int vector_put(vector_p vec, int index, void *data);
-extern void *vector_get(vector_p vec, int index);
-extern void *vector_remove(vector_p vec, int index);
+RC_MAKE_TYPE(vector_ref);
 
+extern vector_ref vector_create(int capacity, int max_inc);
+extern int vector_length(vector_ref vec);
+
+#define vector_put(vec, index, ref) vector_put_impl(vec, index, RC_CAST(rc_ref,ref))
+extern int vector_put_impl(vector_ref vec, int index, rc_ref ref);
+
+extern rc_ref vector_get(vector_ref vec, int index);
+extern rc_ref vector_remove(vector_ref vec, int index);
+
+//~ #define RC_VECTOR_NULL RC_MAKE_NULL(vector_ref)
+#define RC_VECTOR_NULL (RC_CAST(vector_ref, RC_REF_NULL))
 
 
 #endif

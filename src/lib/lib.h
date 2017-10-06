@@ -35,6 +35,7 @@
 #include <lib/libplctag.h>
 #include <platform.h>
 #include <util/attr.h>
+#include <util/refcount.h>
 
 
 
@@ -67,6 +68,10 @@ struct impl_tag_t {
     struct impl_vtable *vtable;
 };
 
+
+
+RC_MAKE_TYPE(impl_tag_ref);
+#define RC_TAG_IMPL_NULL RC_MAKE_NULL(impl_tag_ref)
 
 
 /* the following may need to be used where the tag is already mapped or is not yet mapped */

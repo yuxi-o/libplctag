@@ -50,14 +50,14 @@
  * rc_dec(my_pt);
  */
 
-#define PT_FUNC(name) int name(int *pt_state, void *args) {
+#define PT_FUNC(name) int name(int *pt_line, void *args) {
 
 #define PT_BODY \
-    switch(*pt_state) {                                                \
+    switch(*pt_line) {                                                 \
         case 0:
 
 #define PT_EXIT \
-    do { *pt_state = 0; return PT_TERMINATE; } while(0)
+    do { *pt_line = 0; return PT_TERMINATE; } while(0)
 
 #define PT_END \
     default: \
@@ -66,20 +66,22 @@
     PT_EXIT; \
 }
 
-#define PT_YIELD *pt_state = __LINE__; return PT_RESUME; case __LINE__: do {} while(0)
-#define PT_WAIT_WHILE(cond) do {*pt_state = __LINE__; case __LINE__: if((cond)) return PT_RESUME; } while(0)
-#define PT_WAIT_UNTIL(cond) do {*pt_state = __LINE__; case __LINE__: if(!(cond)) return PT_RESUME; } while(0)
+#define PT_YIELD do {*pt_line = __LINE__; return PT_RESUME; case __LINE__: } while(0)
+#define PT_WAIT_WHILE(cond) do {*pt_line = __LINE__; case __LINE__: if((cond)) return PT_RESUME; } while(0)
+#define PT_WAIT_UNTIL(cond) do {*pt_line = __LINE__; case __LINE__: if(!(cond)) return PT_RESUME; } while(0)
 
-typedef int (*pt_func)(int *pt_state, void *args);
+typedef int (*pt_func)(int *pt_line, rc_ref arg_ref);
 
-typedef struct pt_entry *pt;
+RC_MAKE_TYPE(pt_ref);
 
-extern pt pt_create(pt_func func, void *args);
+extern pt_ref pt_create(pt_func func, rc_ref arg_ref);
 
 
 /* needed for set up of the PT service */
 extern int pt_service_init(void);
 extern void pt_service_teardown(void);
+
+#define RC_PT_NULL (RC_CAST(pt_ref, RC_REF_NULL))
 
 
 #endif
