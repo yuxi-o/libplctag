@@ -32,7 +32,7 @@
 #include <util/hashtable.h>
 #include <util/pt.h>
 #include <system/system.h>
-//#include <ab/ab.h>
+#include <ab/ab.h>
 
 
 
@@ -228,7 +228,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     protocol = attr_get_str(attribs, "protocol", "NONE");
     if(str_cmp_i(protocol,"ab_eip") == 0 || str_cmp_i(protocol, "ab-eip") == 0) {
         /* Allen-Bradley PLC */
-        //tag->impl = ab_create_tag2(attribs);
+        tag->impl_ref = ab_tag_create(attribs);
     } else if(str_cmp_i(protocol, "system") == 0) {
         tag->impl_ref = system_tag_create(attribs);
     }
@@ -1254,11 +1254,11 @@ int initialize_modules(void)
             pdebug(DEBUG_ERROR,"Protothread utility failed to initialize correctly!");
         }
 
-        //~ if(rc == PLCTAG_STATUS_OK) {
-            //~ rc = ab_init();
-        //~ } else {
-            //~ pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
-        //~ }
+        if(rc == PLCTAG_STATUS_OK) {
+            rc = ab_init();
+        } else {
+            pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
+        }
 
         library_initialized = 1;
 
@@ -1286,7 +1286,7 @@ int initialize_modules(void)
 
 void teardown_modules(void)
 {
-    //~ ab_teardown();
+    ab_teardown();
 
     pt_service_teardown();
 

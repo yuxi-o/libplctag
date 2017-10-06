@@ -1,9 +1,9 @@
 /***************************************************************************
- *   Copyright (C) 2015 by OmanTek                                         *
- *   Author Kyle Hayes  kylehayes@omantek.com                              *
+ *   Copyright (C) 2017 by Kyle Hayes                                      *
+ *   Author Kyle Hayes  kyle.hayes@gmail.com                               *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU Library General Public License as       *
+ *   it under the terms of the GNU Lesser General Public License as        *
  *   published by the Free Software Foundation; either version 2 of the    *
  *   License, or (at your option) any later version.                       *
  *                                                                         *
@@ -18,24 +18,47 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-/**************************************************************************
- * CHANGE LOG                                                             *
- *                                                                        *
- * 2012-02-23  KRH - Created file.                                        *
- * 2012-06-15  KRH - Added DF1 registration function.                     *
- *                                                                        *
- **************************************************************************/
 
-#ifndef __LIBPLCTAG_AB_H__
-#define __LIBPLCTAG_AB_H__ 1
-
-
-#include <lib/lib.h>
+#include <platform.h>
 #include <util/attr.h>
+#include <util/debug.h>
+#include <util/hashtable.h>
+#include <util/refcount.h>
+#include <ab/ab.h>
+#include <ab/logix.h>
 
-extern void ab_teardown(void);
-extern int ab_init();
-extern rc_impl_tag ab_tag_create(attr attribs);
 
 
-#endif
+rc_impl_tag ab_tag_create(attr attribs)
+{
+    const char *plc = attr_get_str(attribs,"plc", attr_get_str(attribs, "cpu", "NONE"));
+
+    if(str_cmp_i(plc,"lgx") == 0 || str_cmp_i(plc,"logix") == 0 || str_cmp_i(plc,"controllogix") == 0 || str_cmp_i(plc,"contrologix") == 0 || str_cmp_i(plc,"compactlogix") == 0) {
+        return logix_tag_create(attribs);
+    }
+
+    return NULL;
+}
+
+
+
+
+int ab_init()
+{
+    pdebug(DEBUG_INFO,"Starting to set up AB protocol resources.");
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+void ab_teardown(void)
+{
+    pdebug(DEBUG_INFO,"Starting to teardown AB protocol resources.");
+
+    pdebug(DEBUG_INFO,"Done.");
+}
+
+
+
