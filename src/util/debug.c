@@ -42,7 +42,7 @@
  */
 
 
-static int debug_level = DEBUG_DETAIL;
+static int debug_level = DEBUG_NONE;
 
 extern int set_debug_level(int level)
 {
