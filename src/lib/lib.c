@@ -234,9 +234,9 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     }
 
     if(!rc_deref(tag->impl_ref)) {
+        pdebug(DEBUG_ERROR,"Unable to create tag for protocol %s!",protocol);
         attr_destroy(attribs);
         tag_destroy(tag);
-        pdebug(DEBUG_ERROR,"Unable to create tag for protocol %s!",protocol);
         return PLCTAG_ERR_CREATE;
     }
 
