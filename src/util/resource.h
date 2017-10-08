@@ -3,7 +3,7 @@
  *   Author Kyle Hayes  kyle.hayes@gmail.com                               *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU Library General Public License as       *
+ *   it under the terms of the GNU Lesser General Public License as        *
  *   published by the Free Software Foundation; either version 2 of the    *
  *   License, or (at your option) any later version.                       *
  *                                                                         *
@@ -18,25 +18,19 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-#ifndef __PROTOCOL_SYSTEM_TAG_H__
-#define __PROTOCOL_SYSTEM_TAG_H__ 1
+#ifndef __UTIL_RESOURCE_H__
+#define __UTIL_RESOURCE_H__ 1
 
-#include <util/attr.h>
-#include <util/debug.h>
-#include <platform.h>
-#include <lib/libplctag_tag.h>
+#include <util/refcount.h>
 
-#define MAX_SYSTEM_TAG_NAME (20)
-#define MAX_SYSTEM_TAG_SIZE (30)
+extern rc_ptr resource_get(const char *prefix, const char *name);
+extern int resource_put(const char *prefix, const char *name, rc_ptr resource);
+extern int resource_remove(const char *prefix, const char *name);
 
-struct system_tag_t {
-    struct impl_tag_t base_tag;
 
-    char name[MAX_SYSTEM_TAG_NAME];
-    uint8_t backing_data[MAX_SYSTEM_TAG_SIZE];
-};
+extern int resource_service_init(void);
+extern void resource_service_teardown(void);
 
-typedef struct system_tag_t *system_tag_p;
 
 
 #endif

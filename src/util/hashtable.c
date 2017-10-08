@@ -201,6 +201,11 @@ int hashtable_put(rc_hashtable tab_ref, void *key, int key_len, rc_ptr data_ref)
                 }
             }
         }
+    } else {
+        /* catch the case that the key is already in the hashtable. */
+        if(rc == PLCTAG_STATUS_OK) {
+            rc = PLCTAG_ERR_DUPLICATE;
+        }
     }
 
     pdebug(DEBUG_INFO,"Done");

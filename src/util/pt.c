@@ -38,7 +38,7 @@ struct pt_entry_t {
 
 typedef struct pt_entry_t *pt_entry_p;
 
-static volatile rc_vector pt_list = {0,};
+static volatile rc_vector pt_list = NULL;
 
 /* global PT mutex protecting the PT list. */
 static volatile mutex_p global_pt_mut = NULL;

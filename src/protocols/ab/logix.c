@@ -24,9 +24,16 @@
 #include <util/debug.h>
 #include <util/hashtable.h>
 #include <util/refcount.h>
+#include <util/resource.h>
 #include <ab/ab.h>
 #include <ab/logix.h>
 
+
+
+#define PLC_RESOURCE_PREFIX "AB Logix PLC"
+
+
+typedef rc_ptr rc_plc;
 
 typedef struct {
     struct impl_tag_t base_tag;
@@ -34,6 +41,8 @@ typedef struct {
     int read_requested;
     int write_requested;
     int abort_requested;
+
+    rc_plc plc;
 
 } logix_tag_t;
 
@@ -60,6 +69,9 @@ struct impl_vtable {
 
 
 static void tag_destroy(void *arg);
+static rc_plc find_plc(attr attribs);
+static rc_plc create_plc(attr attribs);
+
 
 static int abort_operation(impl_tag_p impl_tag);
 static int get_size(impl_tag_p impl_tag);
@@ -78,6 +90,7 @@ static struct impl_vtable logix_vtable = { abort_operation, get_size, get_status
 rc_impl_tag logix_tag_create(attr attribs)
 {
     logix_tag_p tag = NULL;
+    rc_plc plc = NULL;
     rc_impl_tag result = NULL;
 
     /* FIXME */
@@ -95,8 +108,16 @@ rc_impl_tag logix_tag_create(attr attribs)
     /* set up the vtable for this kind of tag. */
     tag->base_tag.vtable = &logix_vtable;
 
-    /* tag set up. */
+    /* find the PLC we need for this.   This will create it if does not exist. */
+    plc = find_plc(attribs);
 
+    if(!plc || !rc_deref(plc)) {
+        pdebug(DEBUG_WARN,"Unable to get PLC!");
+        tag_destroy(tag);
+        return NULL;
+    }
+
+    tag->plc = plc;
 
     /* wrap the tag in a reference. */
     result = rc_make_ref(tag, tag_destroy);
@@ -265,4 +286,44 @@ int set_double(impl_tag_p impl_tag, int offset, int size, double val) {
     }
 
     return rc;
+}
+
+
+
+rc_plc find_plc(attr attribs)
+{
+    const char *path = attr_get_str(attribs,"path","NONE");
+    rc_plc plc = resource_get(PLC_RESOURCE_PREFIX, path);
+
+    pdebug(DEBUG_INFO,"Starting with path %s", path);
+
+    if(!plc) {
+        pdebug(DEBUG_DETAIL,"Might need to create new PLC.");
+
+        /* better try to make a PLC. */
+        plc = create_plc(attribs);
+
+        /* FIXME - check the return code! */
+        if(resource_put(PLC_RESOURCE_PREFIX, path, plc) == PLCTAG_ERR_DUPLICATE) {
+            /* oops hit race condition, need to dump this, there is one already. */
+            pdebug(DEBUG_DETAIL,"Oops! Hit race condition and someone else created PLC already!");
+
+            rc_release(plc);
+            plc = resource_get(PLC_RESOURCE_PREFIX, path);
+        }
+    }
+
+    return plc;
+}
+
+
+rc_plc create_plc(attr attribs)
+{
+    rc_plc plc = NULL;
+
+    (void) attribs;
+
+    /* FIXME */
+
+    return plc;
 }

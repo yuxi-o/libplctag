@@ -30,6 +30,7 @@
 #include <util/attr.h>
 #include <util/debug.h>
 #include <util/hashtable.h>
+#include <util/resource.h>
 #include <util/pt.h>
 #include <system/system.h>
 #include <ab/ab.h>
@@ -140,6 +141,7 @@ LIB_EXPORT const char* plc_tag_decode_error(int rc)
         case PLCTAG_ERR_NOT_FOUND: return "PLCTAG_ERR_NOT_FOUND"; break;
         case PLCTAG_ERR_ABORT: return "PLCTAG_ERR_ABORT"; break;
         case PLCTAG_ERR_WINSOCK: return "PLCTAG_ERR_WINSOCK"; break;
+        case PLCTAG_ERR_DUPLICATE: return "PLCTAG_ERR_DUPLICATE"; break;
 
         default: return "Unknown error."; break;
     }
@@ -1248,16 +1250,29 @@ int initialize_modules(void)
             }
         }
 
+        pdebug(DEBUG_INFO,"Setting up resource service.");
+        if(rc == PLCTAG_STATUS_OK) {
+            rc = resource_service_init();
+
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_ERROR,"Resource service failed to initialize correctly!");
+            }
+        }
+
         if(rc == PLCTAG_STATUS_OK) {
             rc = pt_service_init();
-        } else {
-            pdebug(DEBUG_ERROR,"Protothread utility failed to initialize correctly!");
+
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_ERROR,"Protothread utility failed to initialize correctly!");
+            }
         }
 
         if(rc == PLCTAG_STATUS_OK) {
             rc = ab_init();
-        } else {
-            pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
+
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
+            }
         }
 
         library_initialized = 1;
@@ -1289,6 +1304,8 @@ void teardown_modules(void)
     ab_teardown();
 
     pt_service_teardown();
+
+    resource_service_teardown();
 
     pdebug(DEBUG_INFO,"Tearing down library.");
 
