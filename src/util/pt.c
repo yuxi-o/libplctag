@@ -24,21 +24,25 @@
 #include <util/debug.h>
 #include <util/vector.h>
 #include <util/pt.h>
+#include <util/refcount.h>
 
 
 
 typedef enum { WAITING, RUNNING, DEAD } pt_state;
 
-struct pt_entry_t {
+struct protothread_t {
     pt_state state;
     int pt_line;
-    rc_ptr arg_ref;
+    const char *calling_function;
+    int calling_line_num;
+    const char *function_name;
+    int arg_count;
+    void** args;
     pt_func func;
 };
 
-typedef struct pt_entry_t *pt_entry_p;
 
-static volatile rc_vector pt_list = NULL;
+static volatile vector_p pt_list = NULL;
 
 /* global PT mutex protecting the PT list. */
 static volatile mutex_p global_pt_mut = NULL;
@@ -56,7 +60,7 @@ static volatile int library_terminating = 0;
 
 
 
-static void pt_entry_destroy(void *);
+static void protothread_destroy(void *);
 
 
 /*
@@ -80,7 +84,7 @@ int pt_service_init(void)
 
     /* create the vector in which we will have the PTs stored. */
     pt_list = vector_create(100, 50);
-    if(!pt_list || !rc_deref(pt_list)) {
+    if(!pt_list ) {
         pdebug(DEBUG_ERROR,"Unable to allocate a vector!");
         return PLCTAG_ERR_CREATE;
     }
@@ -88,7 +92,7 @@ int pt_service_init(void)
     /* create the background PT runner thread */
     rc = thread_create((thread_p*)&pt_thread, pt_runner, 32*1024, NULL);
     if(rc != PLCTAG_STATUS_OK) {
-        rc_release(pt_list);
+        vector_destroy(pt_list);
         pdebug(DEBUG_INFO,"Unable to create PT runner thread!");
         return rc;
     }
@@ -116,7 +120,7 @@ void pt_service_teardown(void)
 
     pdebug(DEBUG_INFO,"Freeing PT list.");
     /* free the vector of PTs */
-    rc_release(pt_list);
+    vector_destroy(pt_list);
 
     pdebug(DEBUG_INFO,"Freeing global PT mutex.");
     /* clean up the mutex */
@@ -127,10 +131,12 @@ void pt_service_teardown(void)
 
 
 
-rc_protothread pt_create(pt_func func, rc_ptr arg_ref)
+protothread_p pt_create_impl(const char *calling_function, int calling_line_num, const char *func_name, pt_func func, int arg_count, ...)
 {
-    rc_protothread result = NULL;
-    pt_entry_p entry = mem_alloc(sizeof(struct pt_entry_t));
+    protothread_p result = NULL;
+    va_list va;
+    protothread_p entry = mem_alloc(sizeof(struct protothread_t));
+    int status = PLCTAG_STATUS_OK;
 
     if(!entry) {
         pdebug(DEBUG_ERROR,"Cannot allocate new pt entry!");
@@ -138,24 +144,46 @@ rc_protothread pt_create(pt_func func, rc_ptr arg_ref)
     }
 
     entry->state = WAITING;
-    entry->arg_ref = arg_ref;
     entry->func = func;
+    entry->calling_function = calling_function;
+    entry->calling_line_num = calling_line_num;
+    entry->function_name = func_name;
+    entry->arg_count = arg_count;
+    entry->args = mem_alloc(arg_count * sizeof(void*));
 
-    result = rc_make_ref(entry, pt_entry_destroy);
-
-    if(!result || !rc_deref(result)) {
-        pdebug(DEBUG_WARN,"Unable to make PT entry!");
+    if(!entry->args) {
+        pdebug(DEBUG_ERROR,"Unable to allocate argument array!");
         mem_free(entry);
+        return result;
+    }
+
+    va_start(va, arg_count);
+    for(int i=0; i < arg_count; i++) {
+        void *arg = va_arg(va, void *);
+
+        /* this handles only ref counted data! */
+        entry->args[i] = rc_inc(arg);
+    }
+    va_end(va);
+
+    result = rc_make_ref(entry, protothread_destroy);
+
+    if(!result) {
+        pdebug(DEBUG_WARN,"Unable to make PT entry!");
+        protothread_destroy(entry);
         return result;
     }
 
     critical_block(global_pt_mut) {
         /* just insert at the end.   Insert a weak reference. */
-        if(vector_put(pt_list, vector_length(pt_list), rc_weak(result)) != PLCTAG_STATUS_OK) {
+        if((status = vector_put(pt_list, vector_length(pt_list), result)) != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_ERROR,"Unable to insert new protothread into list!");
-            rc_release(result);
-            result = NULL;
         }
+    }
+
+    /* if we did not insert it into the pt list successfully, punt. */
+    if(status != PLCTAG_STATUS_OK) {
+        result = rc_dec(result);
     }
 
     return result;
@@ -178,35 +206,39 @@ void* pt_runner(void* not_used)
         int done = 0;
 
         do {
-            pt_entry_p pt = NULL;
+            protothread_p pt = NULL;
 
             done = 1;
 
             /* find a protothread that is ready to run. */
             critical_block(global_pt_mut) {
                 for(int i=index; i < vector_length(pt_list); i++) {
-                    rc_protothread pt_tmp = vector_get(pt_list,i);
+                    /* get a reference */
+                    pt = rc_inc(vector_get(pt_list,i));
 
                     /* if it is dead or an invalid reference, then remove it. */
-                    if(!(pt = rc_deref(pt_tmp)) || pt->state == DEAD) {
+                    if(!pt) {
+                        pdebug(DEBUG_INFO,"protothread %d is invalid.", i);
                         vector_remove(pt_list, i);
-                        rc_release(pt_tmp);
+                        i--; /* the list changed size.*/
+
                         continue;
                     }
 
-                    /* is it ready to run? */
-                    if(pt->state == WAITING) {
+                    if(pt && pt->state == WAITING) {
                         /* yes, so mark it as running to prevent other threads from changing it. */
                         pt->state = RUNNING;
                         index = i;
                         done = 0;
+
                         break;
                     }
                 }
             }
 
-            if(!done) {
-                if(pt->func(&pt->pt_line, pt->arg_ref) == PT_TERMINATE) {
+            if(pt) {
+                pdebug(DEBUG_DETAIL,"Calling function %s created in function %s at line %d", pt->function_name, pt->calling_function, pt->calling_line_num);
+                if(pt->func(&pt->pt_line, pt->arg_count, pt->args) == PT_TERMINATE) {
                     pt->state = DEAD;
                 }
 
@@ -231,15 +263,35 @@ void* pt_runner(void* not_used)
 
 
 
-void pt_entry_destroy(void *arg)
+void protothread_destroy(void *arg)
 {
-    pt_entry_p entry = arg;
+    protothread_p entry = arg;
 
     if(!entry) {
         pdebug(DEBUG_WARN,"Null pointer passed in!");
         return;
     }
 
-    rc_release(entry->arg_ref);
+    pdebug(DEBUG_INFO,"Destroying protothread with function %s created in function %s at line %d", entry->function_name, entry->calling_function, entry->calling_line_num);
+
+    /* remove the entry from the list. */
+    critical_block(global_pt_mut) {
+        for(int i=0; i < vector_length(pt_list); i++) {
+            protothread_p tmp = vector_get(pt_list, i);
+
+            if(tmp == entry) {
+                vector_remove(pt_list, i);
+                break;
+            }
+        }
+    }
+
+    for(int i=0; i < entry->arg_count; i++) {
+        void *arg = entry->args[i];
+        rc_dec(arg);
+    }
+
+    mem_free(entry->args);
+
     mem_free(entry);
 }

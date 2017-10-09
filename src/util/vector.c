@@ -23,105 +23,86 @@
 #include <platform.h>
 #include <util/refcount.h>
 #include <util/debug.h>
-#include <util/refcount.h>
 #include <util/vector.h>
 
 
 struct vector_t {
-    rc_ptr *data;
     int len;
     int capacity;
     int max_inc;
+    void **data;
 };
 
 
-typedef struct vector_t *vector_p;
 
-
-
-static void vector_destroy(void *data);
 static int ensure_capacity(vector_p vec, int capacity);
 
 
-rc_vector vector_create(int capacity, int max_inc)
+vector_p vector_create(int capacity, int max_inc)
 {
     vector_p vec = NULL;
-    rc_vector result = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
     if(capacity <= 0) {
         pdebug(DEBUG_WARN, "Called with negative capacity!");
-        return result;
+        return NULL;
     }
 
     if(max_inc <= 0) {
         pdebug(DEBUG_WARN, "Called with negative maximum size increment!");
-        return result;
+        return NULL;
     }
 
     vec = mem_alloc(sizeof(struct vector_t));
     if(!vec) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for vector!");
-        return result;
+        return NULL;
     }
 
     vec->len = 0;
     vec->capacity = capacity;
     vec->max_inc = max_inc;
 
-    vec->data = mem_alloc(capacity * sizeof(rc_ptr));
+    vec->data = mem_alloc(capacity * sizeof(void *));
     if(!vec->data) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for vector data!");
         vector_destroy(vec);
-        return result;
-    }
-
-    /* make a ref counted wrapper */
-    result = rc_make_ref(vec, vector_destroy);
-    if(!result) {
-        pdebug(DEBUG_WARN,"Unable to create ref wrapper!");
-        vector_destroy(vec);
+        return NULL;
     }
 
     pdebug(DEBUG_INFO,"Done");
 
-    return result;
+    return vec;
 }
 
 
 
-int vector_length(rc_vector vec_ref)
+int vector_length(vector_p vec)
 {
-    int len;
-    vector_p vec;
-
     pdebug(DEBUG_DETAIL,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
+    if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    len = vec->len;
-
     pdebug(DEBUG_DETAIL,"Done");
 
-    return len;
+    return vec->len;
 }
 
 
 
-int vector_put(rc_vector vec_ref, int index, rc_ptr data_ref)
+int vector_put(vector_p vec, int index, void * data)
 {
-    vector_p vec;
     int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_INFO,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
+    if(!vec) {
        pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -137,11 +118,8 @@ int vector_put(rc_vector vec_ref, int index, rc_ptr data_ref)
         return rc;
     }
 
-    /* clear any references to existing data. */
-    rc_release(vec->data[index]);
-
     /* reference the new data. */
-    vec->data[index] = data_ref;
+    vec->data[index] = data;
 
     /* adjust the length, if needed */
     if(index >= vec->len) {
@@ -154,14 +132,12 @@ int vector_put(rc_vector vec_ref, int index, rc_ptr data_ref)
 }
 
 
-rc_ptr vector_get(rc_vector vec_ref, int index)
+void * vector_get(vector_p vec, int index)
 {
-    vector_p vec;
-
     pdebug(DEBUG_INFO,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
+    if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return NULL;
     }
@@ -177,15 +153,14 @@ rc_ptr vector_get(rc_vector vec_ref, int index)
 }
 
 
-rc_ptr vector_remove(rc_vector vec_ref, int index)
+void * vector_remove(vector_p vec, int index)
 {
-    vector_p vec;
-    rc_ptr result = NULL;
+    void * result = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
     /* check to see if the vector ref is valid */
-    if(!vec_ref || !(vec = rc_deref(vec_ref))) {
+    if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
         return NULL;
     }
@@ -199,9 +174,9 @@ rc_ptr vector_remove(rc_vector vec_ref, int index)
     result = vec->data[index];
 
     /* move the rest of the data over this. */
-    mem_move(&vec->data[index], &vec->data[index+1], sizeof(rc_ptr) * (vec->len - index - 1));
+    mem_move(&vec->data[index], &vec->data[index+1], sizeof(void *) * (vec->len - index - 1));
 
-    /* make sure that we do not have bad data hanging around. */
+    /* make sure that we do not have old data hanging around. */
     vec->data[vec->len - 1] = NULL;
 
     /* adjust the length to the new size */
@@ -214,39 +189,31 @@ rc_ptr vector_remove(rc_vector vec_ref, int index)
 
 
 
-/***********************************************************************
- *************** Private Helper Functions ******************************
- **********************************************************************/
-
-
-void vector_destroy(void *data)
+int vector_destroy(vector_p vec)
 {
-    vector_p vec = data;
-
     if(!vec) {
-        pdebug(DEBUG_WARN,"Null pointer to vector passed!");
-        return;
-    }
-
-    /* clear all the data out */
-    for(int i=0; i < vec->len; i++) {
-        vec->data[i] = rc_release(vec->data[i]);
+        pdebug(DEBUG_WARN,"Null pointer passed!");
+        return PLCTAG_ERR_NULL_PTR;
     }
 
     mem_free(vec->data);
-
-    vec->data = NULL;
-
     mem_free(vec);
+
+    return PLCTAG_STATUS_OK;
 }
 
+
+
+/***********************************************************************
+ *************** Private Helper Functions ******************************
+ **********************************************************************/
 
 
 
 int ensure_capacity(vector_p vec, int capacity)
 {
     int new_inc = 0;
-    rc_ptr *new_data = NULL;
+    void * *new_data = NULL;
 
     if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer or invalid pointer to vector passed!");
@@ -275,13 +242,13 @@ int ensure_capacity(vector_p vec, int capacity)
     }
 
     /* allocate the new data area */
-    new_data = (rc_ptr *)mem_alloc(sizeof(rc_ptr) * (vec->capacity + new_inc));
+    new_data = (void * *)mem_alloc(sizeof(void *) * (vec->capacity + new_inc));
     if(!new_data) {
         pdebug(DEBUG_ERROR,"Unable to allocate new data area!");
         return PLCTAG_ERR_NO_MEM;
     }
 
-    mem_copy(new_data, vec->data, vec->capacity * sizeof(rc_ptr));
+    mem_copy(new_data, vec->data, vec->capacity * sizeof(void *));
 
     mem_free(vec->data);
 

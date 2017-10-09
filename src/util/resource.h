@@ -23,9 +23,10 @@
 
 #include <util/refcount.h>
 
-extern rc_ptr resource_get(const char *prefix, const char *name);
-extern int resource_put(const char *prefix, const char *name, rc_ptr resource);
-extern int resource_remove(const char *prefix, const char *name);
+extern void *resource_get(const char *name);
+extern int resource_put(const char *name, void *resource);
+//~ extern int resource_remove(const char *name);
+extern char *resource_make_name(const char *part1, const char *part2, const char *part3);
 
 
 extern int resource_service_init(void);

@@ -25,28 +25,21 @@
 #include <platform.h>
 
 
-typedef int *rc_ptr;
-
-typedef enum { REF_NULL, REF_STRONG, REF_WEAK} rc_ref_type;
-
-extern rc_ref_type rc_get_ref_type(rc_ptr ref);
-
 #define rc_make_ref(data, cleanup_func) rc_make_ref_impl(__func__, __LINE__, data, cleanup_func)
-extern rc_ptr rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *));
+extern void *rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *));
 
-#define rc_strong(ref) rc_strong_impl(__func__, __LINE__, ref)
-extern rc_ptr rc_strong_impl(const char *func, int line_num, rc_ptr ref);
+#define rc_register_cleanup(ref, cleanup_func) rc_register_cleanup_impl(__func__, __LINE__, ref, cleanup_func)
+extern int rc_register_cleanup_impl(const char *func, int line_num, void *ref, void (*cleanup_func)(void *));
 
-#define rc_weak(ref) rc_weak_impl(__func__, __LINE__, ref)
-extern rc_ptr rc_weak_impl(const char *func, int line_num, rc_ptr ref);
+#define rc_inc(ref) rc_inc_impl(__func__, __LINE__, ref)
+extern void *rc_inc_impl(const char *func, int line_num, void *ref);
 
-#define rc_release(ref) rc_release_impl(__func__, __LINE__, ref)
-extern rc_ptr rc_release_impl(const char *func, int line_num, rc_ptr ref);
-
-#define rc_deref(ref) rc_deref_impl(__func__, __LINE__, ref)
-extern void *rc_deref_impl(const char *func, int line_num, rc_ptr ref);
+#define rc_dec(ref) rc_dec_impl(__func__, __LINE__, ref)
+extern void *rc_dec_impl(const char *func, int line_num, void *ref);
 
 
+int refcount_service_init();
+void refcount_service_teardown();
 
 
 #endif

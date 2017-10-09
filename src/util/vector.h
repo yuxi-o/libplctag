@@ -22,24 +22,15 @@
 #define __UTIL_VECTOR_H__ 1
 
 
-/*
- * The elements stored in this vector must be created via rc_alloc.
- * The vector uses references to keep the memory around.
- */
+typedef struct vector_t *vector_p;
 
-#include <platform.h>
-#include <util/refcount.h>
-
-
-typedef rc_ptr rc_vector;
-
-
-
-extern rc_vector vector_create(int capacity, int max_inc);
-extern int vector_length(rc_vector vec);
-extern int vector_put(rc_vector vec, int index, rc_ptr ref);
-extern rc_ptr vector_get(rc_vector vec, int index);
-extern rc_ptr vector_remove(rc_vector vec, int index);
+extern vector_p vector_create(int capacity, int max_inc);
+extern int vector_length(vector_p vec);
+extern int vector_put(vector_p vec, int index, void * ref);
+extern void *vector_get(vector_p vec, int index);
+extern int vector_on_each(vector_p vec, int (*callback_func)(vector_p vec, int index, void **data, int arg_count, void **args), int num_args, ...);
+extern void *vector_remove(vector_p vec, int index);
+extern int vector_destroy(vector_p vec);
 
 
 

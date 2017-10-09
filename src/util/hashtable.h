@@ -22,16 +22,14 @@
 #define __UTIL_HASHTABLE_H__ 1
 
 
-#include <util/vector.h>
+typedef struct hashtable_t *hashtable_p;
 
-typedef rc_ptr rc_hashtable;
-
-extern rc_hashtable hashtable_create(int size);
-extern rc_ptr hashtable_get(rc_hashtable table, void *key, int key_len);
-
-extern int hashtable_put(rc_hashtable table, void *key, int key_len, rc_ptr data_ref);
-
-extern rc_ptr hashtable_remove(rc_hashtable table, void *key, int key_len);
+extern hashtable_p hashtable_create(int size);
+extern void *hashtable_get(hashtable_p table, void *key, int key_len);
+extern int hashtable_put(hashtable_p table, void *key, int key_len, void *arg);
+extern int hashtable_on_each(hashtable_p table, int (*callback_func)(hashtable_p table, void *key, int key_len, void **data));
+extern void *hashtable_remove(hashtable_p table, void *key, int key_len);
+extern int hashtable_destroy(hashtable_p table);
 
 
 #endif

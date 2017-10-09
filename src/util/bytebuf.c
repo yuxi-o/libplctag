@@ -30,37 +30,33 @@
 #define CHUNK_SIZE (100)
 #define NEAREST_CHUNK(n) ((int)(CHUNK_SIZE * ((int)((n) + (CHUNK_SIZE-1))/CHUNK_SIZE)))
 
-typedef struct {
+struct bytebuf_t {
     int size;
     int capacity;
     int cursor;
     uint8_t *bytes;
-} bytebuf_t;
-
-typedef bytebuf_t *bytebuf_p;
+};
 
 
-static void bytebuf_destroy(void *arg);
 static int ensure_capacity(bytebuf_p buf, int new_cap);
 
 
 
-rc_bytebuf bytebuf_create(int initial_cap)
+bytebuf_p bytebuf_create(int initial_cap)
 {
     bytebuf_p buf = NULL;
-    rc_bytebuf result = NULL;
 
     if(initial_cap < 0) {
         pdebug(DEBUG_WARN,"Initial capacity less than zero!");
-        return result;
+        return buf;
     }
 
     initial_cap = NEAREST_CHUNK(initial_cap);
 
-    buf = mem_alloc(sizeof(bytebuf_t));
+    buf = mem_alloc(sizeof(struct bytebuf_t));
     if(!buf) {
         pdebug(DEBUG_ERROR,"Unable to allocate byte buffer struct!");
-        return result;
+        return NULL;
     }
 
     buf->size = 0;
@@ -71,28 +67,20 @@ rc_bytebuf bytebuf_create(int initial_cap)
     if(!buf->bytes) {
         pdebug(DEBUG_ERROR,"Unable to allocate buffer bytes!");
         bytebuf_destroy(buf);
-        return result;
+        return NULL;
     }
 
-    result = rc_make_ref(buf, bytebuf_destroy);
-    if(!result || !rc_deref(result)) {
-        pdebug(DEBUG_ERROR,"Unable to create ref count wrapper for byte buffer!");
-        bytebuf_destroy(buf);
-        result = NULL;
-    }
-
-    return result;
+    return buf;
 }
 
 
-int bytebuf_set_cursor(rc_bytebuf buf_ref, int cursor)
+int bytebuf_set_cursor(bytebuf_p buf, int cursor)
 {
-    bytebuf_p buf;
     int new_cap = cursor;
 
     pdebug(DEBUG_DETAIL,"Starting to move cursor to %d", cursor);
 
-    if(!buf_ref || !(buf = rc_deref(buf_ref))) {
+    if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -126,13 +114,11 @@ int bytebuf_set_cursor(rc_bytebuf buf_ref, int cursor)
 }
 
 
-int bytebuf_put(rc_bytebuf buf_ref, uint8_t data)
+int bytebuf_put(bytebuf_p buf, uint8_t data)
 {
-    bytebuf_p buf;
-
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    if(!buf_ref || !(buf = rc_deref(buf_ref))) {
+    if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -157,13 +143,11 @@ int bytebuf_put(rc_bytebuf buf_ref, uint8_t data)
 }
 
 
-int bytebuf_get(rc_bytebuf buf_ref, uint8_t *data)
+int bytebuf_get(bytebuf_p buf, uint8_t *data)
 {
-    bytebuf_p buf;
-
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    if(!buf_ref || !(buf = rc_deref(buf_ref))) {
+    if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -184,13 +168,11 @@ int bytebuf_get(rc_bytebuf buf_ref, uint8_t *data)
 }
 
 
-int bytebuf_size(rc_bytebuf buf_ref)
+int bytebuf_size(bytebuf_p buf)
 {
-    bytebuf_p buf;
-
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    if(!buf_ref || !(buf = rc_deref(buf_ref))) {
+    if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -201,13 +183,11 @@ int bytebuf_size(rc_bytebuf buf_ref)
 }
 
 
-uint8_t *bytebuf_get_buffer(rc_bytebuf buf_ref)
+uint8_t *bytebuf_get_buffer(bytebuf_p buf)
 {
-    bytebuf_p buf;
-
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    if(!buf_ref || !(buf = rc_deref(buf_ref))) {
+    if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return NULL;
     }
@@ -219,22 +199,13 @@ uint8_t *bytebuf_get_buffer(rc_bytebuf buf_ref)
 
 
 
-/***********************************************************************
- ***************************** Helper Functions ************************
- **********************************************************************/
-
-
-
-
-void bytebuf_destroy(void *arg)
+int bytebuf_destroy(bytebuf_p buf)
 {
-    bytebuf_p buf = arg;
-
     pdebug(DEBUG_INFO,"Starting.");
 
     if(!buf) {
-        pdebug(DEBUG_WARN,"Called with null pointer!");
-        return;
+        pdebug(DEBUG_WARN,"Null pointer passed!");
+        return PLCTAG_ERR_NULL_PTR;
     }
 
     mem_free(buf->bytes);
@@ -242,7 +213,19 @@ void bytebuf_destroy(void *arg)
     mem_free(buf);
 
     pdebug(DEBUG_INFO,"Done.");
+
+    return PLCTAG_STATUS_OK;
 }
+
+
+
+
+
+/***********************************************************************
+ ***************************** Helper Functions ************************
+ **********************************************************************/
+
+
 
 
 

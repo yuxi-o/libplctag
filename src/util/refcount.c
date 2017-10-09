@@ -23,6 +23,7 @@
 #include <platform.h>
 #include <util/refcount.h>
 #include <util/debug.h>
+#include <util/hashtable.h>
 
 
 #ifndef container_of
@@ -31,66 +32,47 @@
 
 
 
+static volatile mutex_p refcount_mutex = NULL;
+static volatile hashtable_p references = NULL;
+
+
+
+
+
+/*
+ * Handle clean up functions.
+ */
+
+typedef struct cleanup_t *cleanup_p;
+
+struct cleanup_t {
+    cleanup_p next;
+    const char *function_name;
+    int line_num;
+    void (*cleanup_func)(void *arg);
+};
+
+
 /*
  * This is a rc struct that we use to make sure that we are able to align
  * the remaining part of the allocated block.
  */
 
-
 struct refcount_t {
     lock_t lock;
-    int strong;
-    int weak;
+    int count;
     const char *function_name;
     int line_num;
     void *data;
-    void (*cleanup_func)(void *);
+    cleanup_p cleaners;
 };
 
 
 typedef struct refcount_t *refcount_p;
 
-
-
-/*
- * Must be called with lock!
- */
-static inline refcount_p get_refcount(rc_ptr ref)
-{
-    refcount_p result = NULL;
-
-    switch(rc_get_ref_type(ref)) {
-        case REF_STRONG:
-            /* strong ref. */
-            result = container_of(ref, struct refcount_t, strong);
-            break;
-        case REF_WEAK:
-            /* weak ref. */
-            result = container_of(ref, struct refcount_t, weak);
-            break;
-        default:
-            /* REF_NULL or unknown. */
-            result = NULL;
-            break;
-    }
-
-    return result;
-}
-
-
-
-
-
-rc_ref_type rc_get_ref_type(rc_ptr ref)
-{
-    if(!ref) {
-        return REF_NULL;
-    } else if(*(ref) & 0x01) {
-        return REF_WEAK;
-    } else {
-        return REF_STRONG;
-    }
-}
+static void refcount_cleanup(refcount_p rc);
+static cleanup_p cleanup_entry_create(const char *func, int line_num, void (*cleanup_func)(void *));
+static void cleanup_entry_destroy(cleanup_p entry);
 
 
 
@@ -101,9 +83,11 @@ rc_ref_type rc_get_ref_type(rc_ptr ref)
  * reference to the data.
  */
 
-rc_ptr rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *))
+void *rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *))
 {
+    void *result = NULL;
     refcount_p rc = NULL;
+    cleanup_p cleanup = NULL;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
@@ -115,231 +99,202 @@ rc_ptr rc_make_ref_impl(const char *func, int line_num, void *data, void (*clean
         return NULL;
     }
 
-    rc->strong = 2;
-    rc->weak = 1; /* weak count always has lower bit set. */
+    rc->count = 0;
     rc->lock = LOCK_INIT;
-    rc->cleanup_func = cleanup_func;
     rc->data = data;
 
     /* store where we were called from for later. */
     rc->function_name = func;
     rc->line_num = line_num;
 
+    /* allocate the final cleanup struct */
+    cleanup = cleanup_entry_create(func, line_num, cleanup_func);
+
+    if(!cleanup) {
+        pdebug(DEBUG_ERROR,"Unable to allocate cleanup entry!");
+        mem_free(rc);
+        return NULL;
+    }
+
+    rc->cleaners = cleanup;
+
+    /* now put the refcount struct into the hashtable. */
+    critical_block(refcount_mutex) {
+        int retcode = hashtable_put(references, (void *)&data, sizeof(void *), data);
+
+        if(retcode == PLCTAG_STATUS_OK) {
+            result = data;
+        } else if(retcode == PLCTAG_ERR_DUPLICATE) {
+            pdebug(DEBUG_WARN,"Pointer is already being reference counted!");
+            result = NULL;
+        } else {
+            pdebug(DEBUG_WARN,"Unable to enter data pointer into hashtable!  Got error %s", plc_tag_decode_error(retcode));
+            result = NULL;
+        }
+    }
+
     pdebug(DEBUG_INFO, "Done");
 
-    /* return the address of the strong count. */
-    return &(rc->strong);
-}
-
-
-
-/*
- * Increments the strong count if the reference is valid.
- *
- * It returns a strong ref if the passed ref was valid.  It returns
- * NULL if the passed ref was invalid.
- *
- * This is for usage like:
- * my_struct->some_field_ref = rc_strong(ref);
- */
-
-rc_ptr rc_strong_impl(const char *func, int line_num, rc_ptr ref)
-{
-    refcount_p rc = NULL;
-    int strong = 0;
-    int weak = 0;
-    rc_ptr result = NULL;
-
-    pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
-
-    if(!ref) {
-        pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
-        return result;
-    }
-
-    rc = get_refcount(ref);
-
-    if(!rc) {
-        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
-        return result;
-    }
-
-    /* loop until we get the lock */
-    while (!lock_acquire(&rc->lock)) {
-        ; /* do nothing, just spin */
-    }
-
-        if(rc->strong > 0) {
-            rc->strong += 2;
-            result = &(rc->strong);
-        } else {
-            // the reference was bad!
-            pdebug(DEBUG_DETAIL,"Attempt to get strong reference on already invalid reference.");
-            rc->strong = 0;
-        }
-
-        strong = rc->strong;
-        weak = rc->weak;
-
-    /* release the lock so that other things can get to it. */
-    lock_release(&rc->lock);
-
-    if(!result) {
-        pdebug(DEBUG_DETAIL,"Invalid ref!  Unable to take strong reference.");
-    } else {
-        pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
-    }
-
-    /* return the result struct for copying. */
+    /* return the original address if successful otherwise NULL. */
     return result;
 }
 
 
 
 /*
- * Increments the weak count if the reference is valid.
+ * Increments the ref count if the reference is valid.
  *
- * It returns a weak ref if the passed ref was valid.  It returns
- * an invalid ref if the passed ref was invalid.
+ * It returns the original poiner if the passed pointer was valid.  It returns
+ * NULL if the passed pointer was invalid.
  *
  * This is for usage like:
- * my_struct->some_field_ref = rc_weak(ref);
+ * my_struct->some_field_ref = rc_inc(ref);
  */
 
-rc_ptr rc_weak_impl(const char *func, int line_num, rc_ptr ref)
+void *rc_inc_impl(const char *func, int line_num, void *data)
 {
+    int count = 0;
     refcount_p rc = NULL;
-    int strong = 0;
-    int weak = 0;
-    rc_ptr result = NULL;
+    void *  result = NULL;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
-    if(!ref) {
-        pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
+    if(!data) {
+        pdebug(DEBUG_WARN,"Invalid pointer passed!");
         return result;
     }
 
-    rc = get_refcount(ref);
+    /* get the refcount info. */
+    critical_block(refcount_mutex) {
+        rc = hashtable_get(references, &data, sizeof(void *));
 
-    if(!rc) {
-        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
-        return result;
-    }
-
-    /* loop until we get the lock */
-    while (!lock_acquire(&rc->lock)) {
-        ; /* do nothing, just spin */
-    }
-
-        if(rc->strong > 0) {
-            rc->weak += 2;
-            result = &(rc->weak);
-        } else {
-            /* the reference was bad! */
-            pdebug(DEBUG_DETAIL,"Attempt to get weak reference on already invalid reference.");
-            rc->strong = 0;
+        if(rc) {
+            if(rc->count > 0) {
+                rc->count++;
+                count = rc->count;
+                result = data;
+            } else {
+                pdebug(DEBUG_WARN,"Reference is invalid!");
+                result = NULL;
+            }
         }
-
-        strong = rc->strong;
-        weak = rc->weak;
-
-    /* release the lock so that other things can get to it. */
-    lock_release(&rc->lock);
+    }
 
     if(!result) {
         pdebug(DEBUG_DETAIL,"Invalid ref!  Unable to take strong reference.");
     } else {
-        pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
+        pdebug(DEBUG_DETAIL,"Ref count is %d.", count);
     }
 
-    /* return the result struct for copying. */
+    /* return the result pointer. */
     return result;
 }
 
 
 
 /*
- * Decrement the ref count.   Which count is decremented depends on the ref type of the
- * passed pointer.   Either way, a NULL is returned.
+ * create a new cleanup entry.   This will be called when the reference is completely release.
+ * Cleanup functions are called in reverse order that they are created.
+ */
+int rc_register_cleanup_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *))
+{
+    cleanup_p entry = NULL;
+    int status = PLCTAG_STATUS_OK;
+    refcount_p rc = NULL;
+
+    pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
+
+    if(!data) {
+        pdebug(DEBUG_WARN,"Null reference passed!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    /* get the refcount info. */
+    critical_block(refcount_mutex) {
+        rc = hashtable_get(references, &data, sizeof(void *));
+
+        if(rc) {
+            if(rc->count > 0) {
+                entry = cleanup_entry_create(func, line_num, cleanup_func);
+                if(!entry) {
+                    pdebug(DEBUG_ERROR,"Unable to allocated cleanup entry!");
+                    status = PLCTAG_ERR_NO_MEM;
+                    break;
+                }
+
+                entry->next = rc->cleaners;
+                rc->cleaners = entry;
+            } else {
+                pdebug(DEBUG_WARN,"Reference is invalid!");
+                status = PLCTAG_ERR_BAD_DATA;
+            }
+        } else {
+            pdebug(DEBUG_WARN,"No reference count info found for data pointer.");
+            status = PLCTAG_ERR_NOT_FOUND;
+        }
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return status;
+}
+
+
+
+/*
+ * Decrement the ref count.
  *
  * This is for usage like:
- * my_struct->some_field = rc_release(rc_obj);
+ * my_struct->some_field = rc_dec(rc_obj);
  *
- * Note that the clean up function _MUST_ free the data pointer
+ * Note that the final clean up function _MUST_ free the data pointer
  * passed to it.   It must clean up anything referenced by that data,
  * and the block itself using mem_free() or the appropriate function;
  */
 
-rc_ptr rc_release_impl(const char *func, int line_num, rc_ptr ref)
+void *rc_dec_impl(const char *func, int line_num, void *data)
 {
-    refcount_p rc = NULL;
-    int strong = 0;
-    int weak = 0;
+    int count = 0;
     int invalid = 0;
+    refcount_p rc = NULL;
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
-    if(!ref) {
+    if(!data) {
         pdebug(DEBUG_WARN,"Null reference passed!");
         return NULL;
     }
 
-    rc = get_refcount(ref);
+    /* get the refcount info. */
+    critical_block(refcount_mutex) {
+        rc = hashtable_get(references, &data, sizeof(data));
 
-    if(!rc) {
-        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
-        return NULL;
-    }
+        if(rc) {
+            if(rc->count > 0) {
+                rc->count--;
+                count = rc->count;
 
-    /* loop until we get the lock */
-    while (!lock_acquire(&rc->lock)) {
-        ; /* do nothing, just spin */
-    }
-
-        switch(rc_get_ref_type(ref)) {
-            case REF_STRONG:
-                if(rc->strong > 0) {
-                    rc->strong -= 2;
-                } else {
-                    /* oops, already zeroed out!  This is a bug in the calling logic! */
-                    pdebug(DEBUG_WARN,"Strong reference count already zero!");
-                    rc->strong = 0;
+                if(rc->count <= 0) {
+                    /* remove it from the hashtable to make sure no one else uses it. */
+                    hashtable_remove(references, &data, sizeof(data));
                 }
-                break;
-
-            case REF_WEAK:
-                if(rc->weak > 1) {
-                    rc->weak -= 2;
-                } else {
-                    /* oops, already zeroed out!  This is a bug in the calling logic! */
-                    pdebug(DEBUG_WARN,"Weak reference count already zero!");
-                    rc->weak = 1;
-                }
-                break;
-
-            default:
-                pdebug(DEBUG_ERROR,"Malformed reference!  Not NULL, but not valid!");
+            } else {
+                pdebug(DEBUG_WARN,"Reference is invalid!");
                 invalid = 1;
-                break;
+            }
+        } else {
+            pdebug(DEBUG_WARN,"No reference count info found for data pointer.");
+            invalid = 1;
         }
+    }
 
-        strong = rc->strong;
-        weak = rc->weak;
-
-    /* release the lock so that other things can get to it. */
-    lock_release(&rc->lock);
-
-    pdebug(DEBUG_DETAIL,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
+    pdebug(DEBUG_DETAIL,"Ref count is %d.", count);
 
     /* clean up only if both strong and weak count are zero. */
-    if(!invalid && strong <= 0 && weak <= 1) {
-        pdebug(DEBUG_DETAIL,"Calling cleanup function.");
+    if(rc && !invalid && count <= 0) {
+        pdebug(DEBUG_DETAIL,"Calling cleanup functions.");
 
-        rc->cleanup_func(rc->data);
-
-        /* finally done. */
-        mem_free(rc);
+        refcount_cleanup(rc);
     }
 
     return NULL;
@@ -347,50 +302,125 @@ rc_ptr rc_release_impl(const char *func, int line_num, rc_ptr ref)
 
 
 
-void *rc_deref_impl(const char *func, int line_num, rc_ptr ref)
+
+void refcount_cleanup(refcount_p rc)
 {
-    refcount_p rc = NULL;
-    int strong = 0;
-    int weak = 0;
-    void *result = NULL;
-
-    pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
-
-    if(!ref) {
-        pdebug(DEBUG_WARN,"Invalid counter pointer passed!");
-        return result;
-    }
-
-    rc = get_refcount(ref);
-
+    pdebug(DEBUG_INFO,"Starting");
     if(!rc) {
-        pdebug(DEBUG_WARN,"Cannot get ref count structure pointer from ref!");
-        return result;
+        pdebug(DEBUG_WARN,"Refcount is NULL!");
+        return;
     }
 
-    /* loop until we get the lock */
-    while (!lock_acquire(&rc->lock)) {
-        ; /* do nothing, just spin */
+    while(rc->cleaners) {
+        cleanup_p entry = rc->cleaners;
+        rc->cleaners = entry->next;
+
+        /* do the clean up of the object. */
+        pdebug(DEBUG_DETAIL,"Calling clean function added in %s at line %d", entry->function_name, entry->line_num);
+        entry->cleanup_func(rc->data);
+
+        cleanup_entry_destroy(entry);
     }
 
-        strong = rc->strong;
-        weak = rc->weak;
+    /* finally done. */
+    mem_free(rc);
 
-        if(strong > 0) {
-            result = rc->data;
-        }
-
-    /* release the lock so that other things can get to it. */
-    lock_release(&rc->lock);
-
-    pdebug(DEBUG_SPEW,"Ref strong count is %d and weak count is %d",(strong >> 1), (weak >> 1));
-
-    if(result) {
-        pdebug(DEBUG_SPEW,"Valid reference, returning data pointer.");
-    } else {
-        pdebug(DEBUG_INFO,"Invalid reference, returning NULL pointer.");
-    }
-
-    return result;
+    pdebug(DEBUG_INFO,"Done.");
 }
 
+
+
+cleanup_p cleanup_entry_create(const char *func, int line_num, void (*cleanup_func)(void*))
+{
+    cleanup_p entry = NULL;
+
+    entry = mem_alloc(sizeof(struct cleanup_t));
+    if(!entry) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new cleanup struct!");
+        return NULL;
+    }
+
+    entry->cleanup_func = cleanup_func;
+    entry->function_name = func;
+    entry->line_num = line_num;
+
+    return entry;
+}
+
+
+void cleanup_entry_destroy(cleanup_p entry)
+{
+    if(!entry) {
+        pdebug(DEBUG_WARN,"Entry pointer is NULL!");
+        return;
+    }
+
+    mem_free(entry);
+}
+
+
+
+
+int refcount_service_init()
+{
+    int rc = PLCTAG_STATUS_OK;
+
+    pdebug(DEBUG_INFO,"Starting.");
+
+    rc = mutex_create((mutex_p *)&refcount_mutex);
+    if(!rc == PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_ERROR,"Unable to create refcount mutex!");
+        return rc;
+    }
+
+    references = hashtable_create(512);  /* MAGIC */
+    if(!references) {
+        pdebug(DEBUG_ERROR,"Unable to create refcount hashtable!");
+        return PLCTAG_ERR_CREATE;
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+
+
+int refcount_cleanup_entry_destroy(hashtable_p table, void *key, int key_len, void **data)
+{
+    if(!table) {
+        pdebug(DEBUG_WARN,"Null table pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!key || key_len <= 0) {
+        pdebug(DEBUG_WARN,"Key is null or zero length!");
+        return PLCTAG_ERR_BAD_DATA;
+    }
+
+    if(*data) {
+        /* this is a refcount struct. */
+        refcount_p rc = *data;
+
+        pdebug(DEBUG_WARN,"Entry still exists for data %p created in function %s at line %d",rc->data, rc->function_name, rc->line_num);
+
+        refcount_cleanup(rc);
+    }
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+
+void refcount_service_teardown()
+{
+    pdebug(DEBUG_INFO, "Starting");
+
+    /* get rid of the refcount structs. */
+    hashtable_on_each(references, refcount_cleanup_entry_destroy);
+
+    hashtable_destroy(references);
+
+    pdebug(DEBUG_INFO,"Done.");
+}

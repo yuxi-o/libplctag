@@ -24,13 +24,14 @@
 #include <stdint.h>
 #include <util/refcount.h>
 
-typedef rc_ptr rc_bytebuf;
+typedef struct bytebuf_t *bytebuf_p;
 
-extern rc_bytebuf bytebuf_create(int initial_cap);
-extern int bytebuf_set_cursor(rc_bytebuf buf, int cursor);
-extern int bytebuf_put(rc_bytebuf buf, uint8_t data);
-extern int bytebuf_get(rc_bytebuf buf, uint8_t *data);
-extern int bytebuf_size(rc_bytebuf buf);
-extern uint8_t *bytebuf_get_buffer(rc_bytebuf buf);
+extern bytebuf_p bytebuf_create(int initial_cap);
+extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
+extern int bytebuf_put(bytebuf_p buf, uint8_t data);
+extern int bytebuf_get(bytebuf_p buf, uint8_t *data);
+extern int bytebuf_size(bytebuf_p buf);
+extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
+extern int bytebuf_destroy(bytebuf_p buf);
 
 #endif

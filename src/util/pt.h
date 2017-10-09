@@ -71,11 +71,12 @@
 #define PT_WAIT_UNTIL(cond) do {*pt_line = __LINE__; case __LINE__: if(!(cond)) return PT_RESUME; } while(0)
 
 
-typedef rc_ptr rc_protothread;
+typedef struct protothread_t *protothread_p;
 
-typedef int (*pt_func)(int *pt_line, rc_ptr arg_ref);
+typedef int (*pt_func)(int *pt_line, int arg_count, void **arg);
 
-extern rc_protothread pt_create(pt_func func, rc_ptr arg_ref);
+#define pt_create(func, ...) pt_create_impl(__func__, __LINE__, #func, func, __VA_ARGS__)
+extern protothread_p pt_create_impl(const char *calling_func, int calling_line_num, const char *func_name, pt_func func, int arg_count, ...);
 
 
 /* needed for set up of the PT service */
