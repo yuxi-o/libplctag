@@ -27,11 +27,10 @@
 
 
 static volatile hashtable_p resource_by_name = NULL;
-static volatile hashtable_p name_by_resource = NULL;
 static volatile mutex_p resource_mutex = NULL;
 
 
-static void resource_data_cleanup(void *arg);
+static void resource_data_cleanup(int arg_count, void **args);
 
 
 
@@ -74,7 +73,7 @@ int resource_put(const char *name, void * resource)
 {
     int name_len = 0;
     int rc = PLCTAG_STATUS_OK;
-    void *tmp_ref = NULL;
+    const char *dup_name;
 
     if(!name) {
         pdebug(DEBUG_WARN,"Called with null name!");
@@ -85,39 +84,24 @@ int resource_put(const char *name, void * resource)
 
     name_len = str_length(name) + 1;
 
+    dup_name = str_dup(name);
+    if(!dup_name) {
+        pdebug(DEBUG_ERROR,"Unable to create copy of name string!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
     /* set up clean up function on resource. */
-    tmp_ref = rc_make_ref(resource, resource_data_cleanup);
-    if(!tmp_ref) {
+    rc = rc_register_cleanup(resource, resource_data_cleanup, 1, dup_name);
+    if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to add cleanup function to resource!");
-        return PLCTAG_ERR_CREATE;
+        mem_free(dup_name);
+        return rc;
     }
 
     critical_block(resource_mutex) {
-        char *name_copy = str_dup(name);
-
-        if(!name_copy) {
-            pdebug(DEBUG_ERROR,"Unable to copy name!");
-            rc = PLCTAG_ERR_NO_MEM;
-            break;
-        }
-
         rc = hashtable_put(resource_by_name, (void*)name, name_len, resource);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Error inserting resource, %s",plc_tag_decode_error(rc));
-
-            mem_free(name_copy);
-
-            break;
-        }
-
-        rc = hashtable_put(name_by_resource, &resource, sizeof(resource), name_copy);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Error inserting name, %s!", plc_tag_decode_error(rc));
-
-            mem_free(name_copy);
-
-            hashtable_remove(resource_by_name, (void*)name, name_len);
-
             break;
         }
     }
@@ -129,59 +113,40 @@ int resource_put(const char *name, void * resource)
 
 
 
-//~ int resource_remove(const char *prefix, const char *name)
-//~ {
-    //~ int name_len = str_length(prefix) + str_length(name) + 1;
-    //~ char *resource_name = mem_alloc(name_len);
-    //~ int rc = PLCTAG_STATUS_OK;
-    //~ void * resource = NULL;
 
-    //~ pdebug(DEBUG_DETAIL,"Starting with prefix %s and name %s", prefix, name);
-
-    //~ if(!resource_name) {
-        //~ pdebug(DEBUG_ERROR,"Unable to allocate new resource name string!");
-        //~ return PLCTAG_ERR_NO_MEM;
-    //~ }
-
-    //~ snprintf(resource_name, name_len, "%s%s", prefix, name);
-
-    //~ critical_block(resource_mutex) {
-        //~ resource = hashtable_remove(resources, resource_name, name_len);
-    //~ }
-
-    //~ rc_release(resource);
-
-    //~ mem_free(resource_name);
-
-    //~ pdebug(DEBUG_DETAIL,"Done.");
-
-    //~ return rc;
-//~ }
-
-
-
-
-void resource_data_cleanup(void *arg)
+void resource_data_cleanup(int arg_count, void **args)
 {
-    if(!arg) {
+    char *name = NULL;
+    void *resource = NULL;
+
+    if(arg_count < 2 || !args) {
+        pdebug(DEBUG_WARN,"Not enough arguments or null argument array!");
+        return;
+    }
+
+    resource = args[0];
+    name = args[1];
+
+    if(!name) {
+        pdebug(DEBUG_WARN,"Resource name pointer is null!");
+        return;
+    }
+
+    if(!resource) {
         pdebug(DEBUG_WARN, "Null argument!");
+        mem_free(name);
         return;
     }
 
     critical_block(resource_mutex) {
-        const char *name = hashtable_get(name_by_resource, &arg, sizeof(arg));
-
-        if(!name) {
-            pdebug(DEBUG_WARN,"Bad state, no name entry found for resource!");
-            break;
-        }
-
-        hashtable_remove(name_by_resource, &arg, sizeof(arg));
         hashtable_remove(resource_by_name, (void*)name, str_length(name)+1);
 
         mem_free(name);
     }
 }
+
+
+
 
 int resource_service_init(void)
 {
@@ -206,17 +171,6 @@ int resource_service_init(void)
         return PLCTAG_ERR_CREATE;
     }
 
-    /* create the hashtable in which we will have the resource names stored. */
-    name_by_resource = hashtable_create(200); /* MAGIC */
-    if(!name_by_resource) {
-        pdebug(DEBUG_ERROR,"Unable to allocate a hashtable!");
-
-        hashtable_destroy(resource_by_name);
-        mutex_destroy((mutex_p*)&resource_mutex);
-
-        return PLCTAG_ERR_CREATE;
-    }
-
     pdebug(DEBUG_INFO,"Finished initializing Resource utility.");
 
     return rc;
@@ -230,7 +184,6 @@ void resource_service_teardown(void)
     pdebug(DEBUG_INFO,"Tearing down resource hashtable.");
 
     hashtable_destroy(resource_by_name);
-    hashtable_destroy(name_by_resource);
 
     pdebug(DEBUG_INFO,"Tearing down resource mutex.");
 

@@ -35,7 +35,7 @@
 
 extern void ab_teardown(void);
 extern int ab_init();
-extern rc_impl_tag ab_tag_create(attr attribs);
+extern impl_tag_p ab_tag_create(attr attribs);
 
 
 #endif

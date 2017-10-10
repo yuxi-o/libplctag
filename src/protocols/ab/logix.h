@@ -26,7 +26,7 @@
 #include <util/attr.h>
 
 
-extern rc_impl_tag logix_tag_create(attr attribs);
+extern impl_tag_p logix_tag_create(attr attribs);
 
 
 #endif

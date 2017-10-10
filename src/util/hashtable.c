@@ -73,7 +73,7 @@ hashtable_p hashtable_create(int size)
 
     tab->bucket_size = size;
     tab->buckets = vector_create(size, 1);
-    if(tab->buckets) {
+    if(!tab->buckets) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for bucket vector!");
         hashtable_destroy(tab);
         return NULL;
@@ -81,7 +81,7 @@ hashtable_p hashtable_create(int size)
 
     for(int i=0; i < size; i++) {
         bucket = vector_create(5, 5); /* FIXME - MAGIC */
-        if(bucket) {
+        if(!bucket) {
             pdebug(DEBUG_ERROR,"Unable to allocate memory for bucket %d!",i);
             hashtable_destroy(tab);
             return NULL;

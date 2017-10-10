@@ -24,7 +24,6 @@
 #include <lib/libplctag.h>
 #include <util/bytebuf.h>
 #include <util/debug.h>
-#include <util/refcount.h>
 
 
 #define CHUNK_SIZE (100)

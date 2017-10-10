@@ -23,6 +23,7 @@
 #include <util/attr.h>
 #include <util/debug.h>
 #include <util/hashtable.h>
+#include <util/pt.h>
 #include <util/refcount.h>
 #include <util/resource.h>
 #include <ab/ab.h>
@@ -33,17 +34,22 @@
 #define PLC_RESOURCE_PREFIX "AB Logix PLC"
 
 
-typedef rc_ptr rc_plc;
+typedef struct logix_plc *logix_plc_p;
 
 typedef struct {
     struct impl_tag_t base_tag;
+
+    int status;
 
     int read_requested;
     int write_requested;
     int abort_requested;
 
-    rc_plc plc;
+    const char *path;
+    const char *name;
+    int element_count;
 
+    protothread_p worker;
 } logix_tag_t;
 
 typedef logix_tag_t *logix_tag_p;
@@ -68,9 +74,11 @@ struct impl_vtable {
 
 
 
-static void tag_destroy(void *arg);
-static rc_plc find_plc(attr attribs);
-static rc_plc create_plc(attr attribs);
+static PT_FUNC(setup_tag);
+void tag_destroy(int arg_count, void **args);
+
+//~ static rc_plc find_plc(attr attribs);
+//~ static rc_plc create_plc(attr attribs);
 
 
 static int abort_operation(impl_tag_p impl_tag);
@@ -87,11 +95,9 @@ static int set_double(impl_tag_p impl_tag, int offset, int size, double val);
 static struct impl_vtable logix_vtable = { abort_operation, get_size, get_status, start_read, start_write,
                                            get_int, set_int, get_double, set_double };
 
-rc_impl_tag logix_tag_create(attr attribs)
+impl_tag_p logix_tag_create(attr attribs)
 {
     logix_tag_p tag = NULL;
-    rc_plc plc = NULL;
-    rc_impl_tag result = NULL;
 
     /* FIXME */
     (void)attribs;
@@ -107,29 +113,23 @@ rc_impl_tag logix_tag_create(attr attribs)
 
     /* set up the vtable for this kind of tag. */
     tag->base_tag.vtable = &logix_vtable;
+    tag->status = PLCTAG_STATUS_PENDING;
 
-    /* find the PLC we need for this.   This will create it if does not exist. */
-    plc = find_plc(attribs);
-
-    if(!plc || !rc_deref(plc)) {
-        pdebug(DEBUG_WARN,"Unable to get PLC!");
-        tag_destroy(tag);
+    /* create a worker protothread to set up the rest of the tag. */
+    tag->worker = pt_create(setup_tag, 4, tag,
+                            str_dup(attr_get_str(attribs,"path","NONE")),
+                            str_dup(attr_get_str(attribs,"name",NULL)),
+                            str_dup(attr_get_str(attribs,"elem_count","1"))
+                            );
+    if(!tag->worker) {
+        pdebug(DEBUG_ERROR,"Unable to start tag set up protothread!");
+        tag_destroy(1, (void **)&tag);
         return NULL;
-    }
-
-    tag->plc = plc;
-
-    /* wrap the tag in a reference. */
-    result = rc_make_ref(tag, tag_destroy);
-    if(!result || !rc_deref(result)) {
-        pdebug(DEBUG_WARN,"Unable to create RC wrapper!");
-        tag_destroy(tag);
-        result = NULL;
     }
 
     pdebug(DEBUG_INFO,"Done.");
 
-    return result;
+    return (impl_tag_p)tag;
 }
 
 
@@ -140,18 +140,57 @@ rc_impl_tag logix_tag_create(attr attribs)
  *********************** Implementation Functions **********************
  **********************************************************************/
 
-void tag_destroy(void *arg)
+
+PT_FUNC(setup_tag) {
+    logix_tag_p tag = args[0];
+    char *path = args[1];
+    char *name = args[2];
+    char *elem_count_str = args[3];
+
+    (void)arg_count;
+
+    PT_BODY
+        pdebug(DEBUG_INFO,"Running");
+
+        pdebug(DEBUG_INFO,"Got tag path %s", path);
+        pdebug(DEBUG_INFO,"Got tag name %s", name);
+        pdebug(DEBUG_INFO,"Got element count %s", elem_count_str);
+
+        pdebug(DEBUG_INFO,"Cleaning up.");
+        mem_free(path);
+        mem_free(name);
+        mem_free(elem_count_str);
+
+        tag->status = PLCTAG_ERR_NOT_IMPLEMENTED;
+
+    PT_END
+}
+
+
+
+
+
+void tag_destroy(int arg_count, void **args)
 {
-    logix_tag_p tag = arg;
+    logix_tag_p tag = NULL;
 
     pdebug(DEBUG_INFO,"Starting.");
+
+    if(arg_count <= 0 || !args) {
+        pdebug(DEBUG_WARN,"Destructor called with no arguments or null arg pointer!");
+        return;
+    }
+
+    tag = args[0];
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Destructor called with null pointer!");
         return;
     }
 
-    mem_free(tag);
+    if(tag->worker) {
+        rc_dec(tag->worker);
+    }
 
     pdebug(DEBUG_WARN,"Done.");
 }
@@ -290,40 +329,40 @@ int set_double(impl_tag_p impl_tag, int offset, int size, double val) {
 
 
 
-rc_plc find_plc(attr attribs)
-{
-    const char *path = attr_get_str(attribs,"path","NONE");
-    rc_plc plc = resource_get(PLC_RESOURCE_PREFIX, path);
+//~ rc_plc find_plc(attr attribs)
+//~ {
+    //~ const char *path = attr_get_str(attribs,"path","NONE");
+    //~ rc_plc plc = resource_get(PLC_RESOURCE_PREFIX, path);
 
-    pdebug(DEBUG_INFO,"Starting with path %s", path);
+    //~ pdebug(DEBUG_INFO,"Starting with path %s", path);
 
-    if(!plc) {
-        pdebug(DEBUG_DETAIL,"Might need to create new PLC.");
+    //~ if(!plc) {
+        //~ pdebug(DEBUG_DETAIL,"Might need to create new PLC.");
 
-        /* better try to make a PLC. */
-        plc = create_plc(attribs);
+        //~ /* better try to make a PLC. */
+        //~ plc = create_plc(attribs);
 
-        /* FIXME - check the return code! */
-        if(resource_put(PLC_RESOURCE_PREFIX, path, plc) == PLCTAG_ERR_DUPLICATE) {
-            /* oops hit race condition, need to dump this, there is one already. */
-            pdebug(DEBUG_DETAIL,"Oops! Hit race condition and someone else created PLC already!");
+        //~ /* FIXME - check the return code! */
+        //~ if(resource_put(PLC_RESOURCE_PREFIX, path, plc) == PLCTAG_ERR_DUPLICATE) {
+            //~ /* oops hit race condition, need to dump this, there is one already. */
+            //~ pdebug(DEBUG_DETAIL,"Oops! Hit race condition and someone else created PLC already!");
 
-            rc_release(plc);
-            plc = resource_get(PLC_RESOURCE_PREFIX, path);
-        }
-    }
+            //~ rc_release(plc);
+            //~ plc = resource_get(PLC_RESOURCE_PREFIX, path);
+        //~ }
+    //~ }
 
-    return plc;
-}
+    //~ return plc;
+//~ }
 
 
-rc_plc create_plc(attr attribs)
-{
-    rc_plc plc = NULL;
+//~ rc_plc create_plc(attr attribs)
+//~ {
+    //~ rc_plc plc = NULL;
 
-    (void) attribs;
+    //~ (void) attribs;
 
-    /* FIXME */
+    //~ /* FIXME */
 
-    return plc;
-}
+    //~ return plc;
+//~ }

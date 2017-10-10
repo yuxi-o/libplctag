@@ -24,12 +24,13 @@
 
 #include <platform.h>
 
+typedef void (*rc_cleanup_func)(int arg_count, void **);
 
-#define rc_make_ref(data, cleanup_func) rc_make_ref_impl(__func__, __LINE__, data, cleanup_func)
-extern void *rc_make_ref_impl(const char *func, int line_num, void *data, void (*cleanup_func)(void *));
+#define rc_alloc(size, cleanup_func, ...) rc_alloc_impl(__func__, __LINE__, size, cleanup_func, __VA_ARGS__)
+extern void *rc_alloc_impl(const char *func, int line_num, int size, rc_cleanup_func cleaner, int extra_arg_count, ...);
 
-#define rc_register_cleanup(ref, cleanup_func) rc_register_cleanup_impl(__func__, __LINE__, ref, cleanup_func)
-extern int rc_register_cleanup_impl(const char *func, int line_num, void *ref, void (*cleanup_func)(void *));
+#define rc_register_cleanup(ref, cleanup_func, ...) rc_register_cleanup_impl(__func__, __LINE__, ref, cleanup_func, __VA_ARGS__)
+extern int rc_register_cleanup_impl(const char *func, int line_num, void *ref, rc_cleanup_func cleaner, int extra_arg_count, ...);
 
 #define rc_inc(ref) rc_inc_impl(__func__, __LINE__, ref)
 extern void *rc_inc_impl(const char *func, int line_num, void *ref);
@@ -38,8 +39,8 @@ extern void *rc_inc_impl(const char *func, int line_num, void *ref);
 extern void *rc_dec_impl(const char *func, int line_num, void *ref);
 
 
-int refcount_service_init();
-void refcount_service_teardown();
+//~ int refcount_service_init();
+//~ void refcount_service_teardown();
 
 
 #endif

@@ -50,7 +50,7 @@
  * rc_dec(my_pt);
  */
 
-#define PT_FUNC(name) int name(int *pt_line, void *args) {
+#define PT_FUNC(name) int name(int *pt_line, int arg_count, void **args)
 
 #define PT_BODY \
     switch(*pt_line) {                                                 \
@@ -63,8 +63,7 @@
     default: \
         break; \
     } \
-    PT_EXIT; \
-}
+    PT_EXIT;                                                           \
 
 #define PT_YIELD do {*pt_line = __LINE__; return PT_RESUME; case __LINE__: } while(0)
 #define PT_WAIT_WHILE(cond) do {*pt_line = __LINE__; case __LINE__: if((cond)) return PT_RESUME; } while(0)

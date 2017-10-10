@@ -60,7 +60,7 @@ static volatile int library_terminating = 0;
 
 
 
-static void protothread_destroy(void *);
+static void protothread_destroy(int arg_count, void **args);
 
 
 /*
@@ -133,14 +133,13 @@ void pt_service_teardown(void)
 
 protothread_p pt_create_impl(const char *calling_function, int calling_line_num, const char *func_name, pt_func func, int arg_count, ...)
 {
-    protothread_p result = NULL;
     va_list va;
-    protothread_p entry = mem_alloc(sizeof(struct protothread_t));
+    protothread_p entry = rc_alloc(sizeof(struct protothread_t) + ((arg_count+1)*sizeof(void*)), protothread_destroy, 0);
     int status = PLCTAG_STATUS_OK;
 
     if(!entry) {
         pdebug(DEBUG_ERROR,"Cannot allocate new pt entry!");
-        return result;
+        return NULL;
     }
 
     entry->state = WAITING;
@@ -148,45 +147,29 @@ protothread_p pt_create_impl(const char *calling_function, int calling_line_num,
     entry->calling_function = calling_function;
     entry->calling_line_num = calling_line_num;
     entry->function_name = func_name;
-    entry->arg_count = arg_count;
-    entry->args = mem_alloc(arg_count * sizeof(void*));
+    entry->arg_count = arg_count+1;
+    entry->args = (void **)(entry+1); /* point past the PT struct. */
 
-    if(!entry->args) {
-        pdebug(DEBUG_ERROR,"Unable to allocate argument array!");
-        mem_free(entry);
-        return result;
-    }
-
+    /* fill in the extra args.   Reserve slot 0 for the PT itself. */
     va_start(va, arg_count);
-    for(int i=0; i < arg_count; i++) {
-        void *arg = va_arg(va, void *);
-
-        /* this handles only ref counted data! */
-        entry->args[i] = rc_inc(arg);
+    for(int i=1; i < (arg_count+1); i++) {
+        entry->args[i] = va_arg(va, void *);
     }
     va_end(va);
 
-    result = rc_make_ref(entry, protothread_destroy);
-
-    if(!result) {
-        pdebug(DEBUG_WARN,"Unable to make PT entry!");
-        protothread_destroy(entry);
-        return result;
-    }
-
     critical_block(global_pt_mut) {
-        /* just insert at the end.   Insert a weak reference. */
-        if((status = vector_put(pt_list, vector_length(pt_list), result)) != PLCTAG_STATUS_OK) {
+        /* just insert at the end. */
+        if((status = vector_put(pt_list, vector_length(pt_list), entry)) != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_ERROR,"Unable to insert new protothread into list!");
         }
     }
 
     /* if we did not insert it into the pt list successfully, punt. */
     if(status != PLCTAG_STATUS_OK) {
-        result = rc_dec(result);
+        entry = rc_dec(entry);
     }
 
-    return result;
+    return entry;
 }
 
 
@@ -223,15 +206,16 @@ void* pt_runner(void* not_used)
                         i--; /* the list changed size.*/
 
                         continue;
-                    }
-
-                    if(pt && pt->state == WAITING) {
+                    } else if(pt->state == WAITING) {
                         /* yes, so mark it as running to prevent other threads from changing it. */
                         pt->state = RUNNING;
                         index = i;
                         done = 0;
 
                         break;
+                    } else {
+                        /* not a PT we are interested in, either dead or running. */
+                        pt = rc_dec(pt);
                     }
                 }
             }
@@ -244,6 +228,9 @@ void* pt_runner(void* not_used)
 
                 /* do not rerun the PT again. */
                 index++;
+
+                /* release the reference. */
+                rc_dec(pt);
             }
         } while(!done);
 
@@ -263,11 +250,11 @@ void* pt_runner(void* not_used)
 
 
 
-void protothread_destroy(void *arg)
+void protothread_destroy(int arg_count, void **args)
 {
-    protothread_p entry = arg;
+    protothread_p entry = NULL;
 
-    if(!entry) {
+    if(arg_count <=0 || !args || !(entry = args[0])) {
         pdebug(DEBUG_WARN,"Null pointer passed in!");
         return;
     }
@@ -286,12 +273,6 @@ void protothread_destroy(void *arg)
         }
     }
 
-    for(int i=0; i < entry->arg_count; i++) {
-        void *arg = entry->args[i];
-        rc_dec(arg);
-    }
-
+    /* It is up to the original caller to clean up the args themselves! */
     mem_free(entry->args);
-
-    mem_free(entry);
 }

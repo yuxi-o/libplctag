@@ -69,9 +69,6 @@ struct impl_tag_t {
 };
 
 
-typedef rc_ptr rc_impl_tag;
-
-
 
 /* the following may need to be used where the tag is already mapped or is not yet mapped */
 extern int lib_init(void);

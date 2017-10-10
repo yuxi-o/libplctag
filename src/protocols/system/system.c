@@ -52,7 +52,7 @@ static int get_double(impl_tag_p tag, int offset, int size, double *val);
 static int set_double(impl_tag_p tag, int offset, int size, double val);
 
 
-static void tag_destroy(void *);
+static void tag_destroy(int arg_count, void **args);
 
 /*
 VTable:
@@ -80,10 +80,9 @@ struct impl_vtable version_tag_vtable = {abort_operation, size_version, get_stat
 
 
 
-rc_impl_tag system_tag_create(attr attribs)
+impl_tag_p system_tag_create(attr attribs)
 {
     system_tag_p tag = NULL;
-    rc_impl_tag result = NULL;
     const char *name = attr_get_str(attribs, "name", NULL);
 
     pdebug(DEBUG_INFO,"Starting.");
@@ -91,7 +90,7 @@ rc_impl_tag system_tag_create(attr attribs)
     /* check the name, if none given, punt. */
     if(!name || str_length(name) < 1) {
         pdebug(DEBUG_ERROR, "System tag name is empty or missing!");
-        return result;
+        return NULL;
     }
 
     pdebug(DEBUG_DETAIL,"Creating special tag %s", name);
@@ -101,10 +100,10 @@ rc_impl_tag system_tag_create(attr attribs)
      * we have a vehicle for returning status.
      */
 
-    tag = mem_alloc(sizeof(struct system_tag_t));
+    tag = rc_alloc(sizeof(struct system_tag_t), tag_destroy, 0);
     if(!tag) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for system tag!");
-        return result;
+        return NULL;
     }
 
     tag->creation_time = time_ms();
@@ -118,19 +117,13 @@ rc_impl_tag system_tag_create(attr attribs)
         tag->base_tag.vtable = &version_tag_vtable;
     } else {
         pdebug(DEBUG_WARN,"Unknown tag %s!",name);
-        tag_destroy(tag);
-        return result;
-    }
-
-    result = rc_make_ref(tag, tag_destroy);
-    if(!rc_deref(result)) {
-        pdebug(DEBUG_ERROR,"Could not make ref from system tag!");
-        tag_destroy(tag);
+        tag_destroy(1, (void**)&tag);
+        return NULL;
     }
 
     pdebug(DEBUG_INFO,"Done");
 
-    return result;
+    return (impl_tag_p)tag;
 }
 
 
@@ -285,15 +278,12 @@ int set_double(impl_tag_p tag, int offset, int size, double val)
 
 
 
-void tag_destroy(void *arg)
+void tag_destroy(int arg_count, void **args)
 {
-    system_tag_p tag = (system_tag_p)arg;
+    (void)arg_count;
+    (void)args;
 
-    (void)tag;
-
-    if(tag) {
-        mem_free(tag);
-    }
+    /* nothing to do.   rc_dec will clean up the memory. */
 }
 
 
