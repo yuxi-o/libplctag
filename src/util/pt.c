@@ -60,7 +60,7 @@ static volatile int library_terminating = 0;
 
 
 
-static void protothread_destroy(int arg_count, void **args);
+static void protothread_destroy(void *pt_arg, int arg_count, void **args);
 
 
 /*
@@ -134,7 +134,7 @@ void pt_service_teardown(void)
 protothread_p pt_create_impl(const char *calling_function, int calling_line_num, const char *func_name, pt_func func, int arg_count, ...)
 {
     va_list va;
-    protothread_p entry = rc_alloc(sizeof(struct protothread_t) + ((arg_count+1)*sizeof(void*)), protothread_destroy, 0);
+    protothread_p entry = rc_alloc(sizeof(struct protothread_t) + (arg_count*sizeof(void*)), protothread_destroy, 0);
     int status = PLCTAG_STATUS_OK;
 
     if(!entry) {
@@ -142,6 +142,7 @@ protothread_p pt_create_impl(const char *calling_function, int calling_line_num,
         return NULL;
     }
 
+    entry->pt_line = 0;
     entry->state = WAITING;
     entry->func = func;
     entry->calling_function = calling_function;
@@ -152,7 +153,7 @@ protothread_p pt_create_impl(const char *calling_function, int calling_line_num,
 
     /* fill in the extra args.   Reserve slot 0 for the PT itself. */
     va_start(va, arg_count);
-    for(int i=1; i < (arg_count+1); i++) {
+    for(int i=0; i < arg_count; i++) {
         entry->args[i] = va_arg(va, void *);
     }
     va_end(va);
@@ -250,11 +251,14 @@ void* pt_runner(void* not_used)
 
 
 
-void protothread_destroy(int arg_count, void **args)
+void protothread_destroy(void *pt_arg, int arg_count, void **args)
 {
-    protothread_p entry = NULL;
+    protothread_p entry = pt_arg;
 
-    if(arg_count <=0 || !args || !(entry = args[0])) {
+    (void)arg_count;
+    (void)args;
+
+    if(arg_count !=0 || !entry) {
         pdebug(DEBUG_WARN,"Null pointer passed in!");
         return;
     }
@@ -273,6 +277,10 @@ void protothread_destroy(int arg_count, void **args)
         }
     }
 
-    /* It is up to the original caller to clean up the args themselves! */
-    mem_free(entry->args);
+    /*
+     * the args should be cleaned up by the caller, either by a
+     * registered clean up function or within the PT itself.
+     * The args array is actually allocated along with the PT struct
+     * and is deallocated with it by the RC framework.
+     */
 }

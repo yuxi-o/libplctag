@@ -49,8 +49,8 @@ struct cleanup_t {
     cleanup_p next;
     const char *function_name;
     int line_num;
-    int arg_count;
-    void **args;
+    int extra_arg_count;
+    void **extra_args;
     rc_cleanup_func cleanup_func;
     void *dummy[]; /* force alignment */
 };
@@ -295,9 +295,10 @@ void *rc_dec_impl(const char *func, int line_num, void *data)
 
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
+
     pdebug(DEBUG_DETAIL,"Ref count is %d.", count);
 
-    /* clean up only if both strong and weak count are zero. */
+    /* clean up only if count is zero. */
     if(rc && !invalid && count <= 0) {
         pdebug(DEBUG_DETAIL,"Calling cleanup functions.");
 
@@ -322,12 +323,13 @@ void refcount_cleanup(refcount_p rc)
 
     while(rc->cleaners) {
         cleanup_p entry = rc->cleaners;
+        void *data = (void *)(rc+1);
+
         rc->cleaners = entry->next;
 
         /* do the clean up of the object. */
         pdebug(DEBUG_DETAIL,"Calling clean function added in %s at line %d", entry->function_name, entry->line_num);
-        entry->args[0] = (void *)(rc+1);
-        entry->cleanup_func(entry->arg_count, entry->args);
+        entry->cleanup_func(data, entry->extra_arg_count, entry->extra_args);
 
         cleanup_entry_destroy(entry);
     }
@@ -339,15 +341,11 @@ void refcount_cleanup(refcount_p rc)
 }
 
 
-
 cleanup_p cleanup_entry_create(const char *func, int line_num, rc_cleanup_func cleanup_func, int extra_arg_count, va_list extra_args)
 {
     cleanup_p entry = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
-
-    /* add room for the original data pointer. */
-    extra_arg_count++;
 
     entry = mem_alloc(sizeof(struct cleanup_t) + (sizeof(void*) * extra_arg_count));
     if(!entry) {
@@ -358,15 +356,14 @@ cleanup_p cleanup_entry_create(const char *func, int line_num, rc_cleanup_func c
     entry->cleanup_func = cleanup_func;
     entry->function_name = func;
     entry->line_num = line_num;
-    entry->arg_count = extra_arg_count;
-    entry->args = (void **)(entry+1); /* just past the struct... */
+    entry->extra_arg_count = extra_arg_count;
+    entry->extra_args = (void **)(entry+1); /* just past the struct... */
 
     /*
-     * fill in the args, reserve slot 0 for the original data which will be filled in
-     * when the cleanup function is called.
+     * Fill in the extra args.   There might not be any.
      */
-    for(int i=1; i < extra_arg_count; i++) {
-        entry->args[i] = va_arg(extra_args, void *);
+    for(int i=0; i < extra_arg_count; i++) {
+        entry->extra_args[i] = va_arg(extra_args, void *);
     }
 
     pdebug(DEBUG_INFO,"Done.");

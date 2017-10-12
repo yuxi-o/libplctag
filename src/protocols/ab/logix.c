@@ -21,6 +21,7 @@
 
 #include <platform.h>
 #include <util/attr.h>
+#include <util/bytebuf.h>
 #include <util/debug.h>
 #include <util/hashtable.h>
 #include <util/pt.h>
@@ -39,6 +40,8 @@ typedef struct logix_plc *logix_plc_p;
 typedef struct {
     struct impl_tag_t base_tag;
 
+    mutex_p mutex;
+
     int status;
 
     int read_requested;
@@ -48,6 +51,8 @@ typedef struct {
     const char *path;
     const char *name;
     int element_count;
+
+    bytebuf_p data;
 
     protothread_p worker;
 } logix_tag_t;
@@ -75,7 +80,8 @@ struct impl_vtable {
 
 
 static PT_FUNC(setup_tag);
-void tag_destroy(int arg_count, void **args);
+static void setup_tag_cleanup(void *tag_arg, int arg_count, void **args);
+static void logix_tag_destroy(void *tag_arg, int arg_count, void **args);
 
 //~ static rc_plc find_plc(attr attribs);
 //~ static rc_plc create_plc(attr attribs);
@@ -98,6 +104,10 @@ static struct impl_vtable logix_vtable = { abort_operation, get_size, get_status
 impl_tag_p logix_tag_create(attr attribs)
 {
     logix_tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
+    const char *path;
+    const char *name;
+    const char *elems;
 
     /* FIXME */
     (void)attribs;
@@ -105,7 +115,7 @@ impl_tag_p logix_tag_create(attr attribs)
     pdebug(DEBUG_INFO,"Starting.");
 
     /* build the new tag. */
-    tag = mem_alloc(sizeof(logix_tag_t));
+    tag = rc_alloc(sizeof(logix_tag_t), logix_tag_destroy, 0);
     if(!tag) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for new tag!");
         return NULL;
@@ -115,15 +125,33 @@ impl_tag_p logix_tag_create(attr attribs)
     tag->base_tag.vtable = &logix_vtable;
     tag->status = PLCTAG_STATUS_PENDING;
 
+    rc = mutex_create(&tag->mutex);
+    if(!rc == PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to create mutex!");
+        logix_tag_destroy(tag, 0, NULL);
+        return NULL;
+    }
+
     /* create a worker protothread to set up the rest of the tag. */
-    tag->worker = pt_create(setup_tag, 4, tag,
-                            str_dup(attr_get_str(attribs,"path","NONE")),
-                            str_dup(attr_get_str(attribs,"name",NULL)),
-                            str_dup(attr_get_str(attribs,"elem_count","1"))
-                            );
+    path = str_dup(attr_get_str(attribs,"path","NONE"));
+    name = str_dup(attr_get_str(attribs,"name",NULL));
+    elems = str_dup(attr_get_str(attribs,"elem_count","1"));
+
+    tag->worker = pt_create(setup_tag, 4, tag, path, name, elems);
     if(!tag->worker) {
         pdebug(DEBUG_ERROR,"Unable to start tag set up protothread!");
-        tag_destroy(1, (void **)&tag);
+        logix_tag_destroy(tag, 0, NULL);
+        return NULL;
+    }
+
+    /* add a clean up function to get rid of the extra arguments. */
+    rc = rc_register_cleanup(tag->worker, setup_tag_cleanup, 3, path, name, elems);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_ERROR,"Unable to register cleanup function!");
+        mem_free(path);
+        mem_free(name);
+        mem_free(elems);
+        logix_tag_destroy(tag, 0, NULL);
         return NULL;
     }
 
@@ -156,36 +184,70 @@ PT_FUNC(setup_tag) {
         pdebug(DEBUG_INFO,"Got tag name %s", name);
         pdebug(DEBUG_INFO,"Got element count %s", elem_count_str);
 
-        pdebug(DEBUG_INFO,"Cleaning up.");
-        mem_free(path);
-        mem_free(name);
-        mem_free(elem_count_str);
 
-        tag->status = PLCTAG_ERR_NOT_IMPLEMENTED;
+        tag->status = PLCTAG_STATUS_OK;
 
     PT_END
 }
 
 
+void setup_tag_cleanup(void *tag_arg, int arg_count, void **args)
+{
+    pdebug(DEBUG_INFO,"Starting");
+
+    (void)tag_arg;
+
+    if(arg_count != 3) {
+        pdebug(DEBUG_WARN, "Expected arg_count=3 but got %d", arg_count);
+        return;
+    }
+
+    if(args[0]) {
+        mem_free(args[0]);
+    }
+
+    if(args[1]) {
+        mem_free(args[1]);
+    }
+
+    if(args[2]) {
+        mem_free(args[2]);
+    }
+
+}
 
 
+/***********************************************************************
+ ************************ Helper Functions *****************************
+ **********************************************************************/
 
-void tag_destroy(int arg_count, void **args)
+
+void logix_tag_destroy(void *tag_arg, int arg_count, void **args)
 {
     logix_tag_p tag = NULL;
 
     pdebug(DEBUG_INFO,"Starting.");
 
-    if(arg_count <= 0 || !args) {
+    (void)args;
+
+    if(arg_count != 0) {
         pdebug(DEBUG_WARN,"Destructor called with no arguments or null arg pointer!");
         return;
     }
 
-    tag = args[0];
+    tag = tag_arg;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Destructor called with null pointer!");
         return;
+    }
+
+    if(tag->mutex) {
+        mutex_destroy(&tag->mutex);
+    }
+
+    if(tag->data) {
+        bytebuf_destroy(tag->data);
     }
 
     if(tag->worker) {
@@ -194,6 +256,13 @@ void tag_destroy(int arg_count, void **args)
 
     pdebug(DEBUG_WARN,"Done.");
 }
+
+
+
+
+/***********************************************************************
+ ******************** Tag Implementation Functions *********************
+ **********************************************************************/
 
 int abort_operation(impl_tag_p impl_tag)
 {
@@ -219,34 +288,56 @@ int get_size(impl_tag_p impl_tag)
         return PLCTAG_ERR_NULL_PTR;
     }
 
+    if(tag->data) {
+        size = bytebuf_size(tag->data);
+    }
+
 
     return size;
 }
 
+
 int get_status(impl_tag_p impl_tag) {
     logix_tag_p tag = (logix_tag_p)impl_tag;
-    int status = PLCTAG_STATUS_OK;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Called with null pointer!");
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    return status;
+    return tag->status;
 }
+
+
 
 int start_read(impl_tag_p impl_tag) {
     logix_tag_p tag = (logix_tag_p)impl_tag;
+    int rc = PLCTAG_STATUS_OK;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Called with null pointer!");
         return PLCTAG_ERR_NULL_PTR;
+    }
+
+    rc = get_status(impl_tag);
+
+    if(rc == PLCTAG_STATUS_OK) {
+        critical_block(tag->mutex) {
+            tag->read_requested = 1;
+            tag->status = PLCTAG_STATUS_PENDING;
+        }
+
+        return PLCTAG_STATUS_PENDING;
+    } else if(rc == PLCTAG_STATUS_PENDING) {
+        return PLCTAG_ERR_BUSY;
     }
 
     tag->read_requested = 1;
 
     return PLCTAG_STATUS_OK;
 }
+
+
 
 int start_write(impl_tag_p impl_tag) {
     logix_tag_p tag = (logix_tag_p)impl_tag;
@@ -260,6 +351,9 @@ int start_write(impl_tag_p impl_tag) {
 
     return PLCTAG_STATUS_OK;
 }
+
+
+
 
 int get_int(impl_tag_p impl_tag, int offset, int size, int64_t *val) {
     logix_tag_p tag = (logix_tag_p)impl_tag;

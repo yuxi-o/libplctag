@@ -24,7 +24,7 @@
 
 #include <platform.h>
 
-typedef void (*rc_cleanup_func)(int arg_count, void **);
+typedef void (*rc_cleanup_func)(void *, int extra_arg_count, void **);
 
 #define rc_alloc(size, cleanup_func, ...) rc_alloc_impl(__func__, __LINE__, size, cleanup_func, __VA_ARGS__)
 extern void *rc_alloc_impl(const char *func, int line_num, int size, rc_cleanup_func cleaner, int extra_arg_count, ...);

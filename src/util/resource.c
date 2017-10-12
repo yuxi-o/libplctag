@@ -30,7 +30,7 @@ static volatile hashtable_p resource_by_name = NULL;
 static volatile mutex_p resource_mutex = NULL;
 
 
-static void resource_data_cleanup(int arg_count, void **args);
+static void resource_data_cleanup(void *rsrc_arg, int arg_count, void **args);
 
 
 
@@ -114,18 +114,61 @@ int resource_put(const char *name, void * resource)
 
 
 
-void resource_data_cleanup(int arg_count, void **args)
+char *resource_make_name_impl(int num_args, ...)
+{
+    va_list arg_list;
+    int total_length = 0;
+    char *result = NULL;
+    char *tmp = NULL;
+
+    /* first loop to find the length */
+    va_start(arg_list, num_args);
+    for(int i=0; i < num_args; i++) {
+        tmp = va_arg(arg_list, char *);
+        if(tmp) {
+            total_length += str_length(tmp);
+        }
+    }
+    va_end(arg_list);
+
+    /* make a buffer big enough */
+    total_length += 1;
+
+    result = mem_alloc(total_length);
+    if(!result) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new string buffer!");
+        return NULL;
+    }
+
+    /* loop to copy the strings */
+    result[0] = 0;
+    va_start(arg_list, num_args);
+    for(int i=0; i < num_args; i++) {
+        tmp = va_arg(arg_list, char *);
+        if(tmp) {
+            int len = str_length(result);
+            str_copy(&result[len], total_length - len, tmp);
+        }
+    }
+    va_end(arg_list);
+
+    return result;
+}
+
+
+
+void resource_data_cleanup(void *resource_arg, int extra_arg_count, void **extra_args)
 {
     char *name = NULL;
     void *resource = NULL;
 
-    if(arg_count < 2 || !args) {
+    if(extra_arg_count < 1 || !extra_args) {
         pdebug(DEBUG_WARN,"Not enough arguments or null argument array!");
         return;
     }
 
-    resource = args[0];
-    name = args[1];
+    resource = resource_arg;
+    name = extra_args[0];
 
     if(!name) {
         pdebug(DEBUG_WARN,"Resource name pointer is null!");

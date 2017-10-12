@@ -74,7 +74,7 @@ static volatile int global_tag_id = 1;
 #define MAX_TAG_ID (1000000000)
 
 
-static void tag_destroy(int arg_count, void **args);
+static void tag_destroy(void *tar_arg, int arg_count, void **args);
 static int insert_tag(tag_p tag);
 static int wait_for_timeout(tag_p tag, int timeout);
 static tag_p get_tag(tag_id id);
@@ -221,6 +221,10 @@ LIB_EXPORT const char* plc_tag_decode_error(int rc)
         return "PLCTAG_ERR_DUPLICATE";
         break;
 
+    case PLCTAG_ERR_BUSY:
+        return "PLCTAG_ERR_BUSY";
+        break;
+
     default:
         return "Unknown error.";
         break;
@@ -276,7 +280,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     rc = mutex_create(&tag->api_mut);
     if(rc != PLCTAG_STATUS_OK) {
         attr_destroy(attribs);
-        tag_destroy(1, (void **)&tag);
+        tag_destroy(tag, 0, NULL);
         pdebug(DEBUG_ERROR,"Unable to create API mutex!");
         return rc;
     }
@@ -284,7 +288,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     rc = mutex_create(&tag->external_mut);
     if(rc != PLCTAG_STATUS_OK) {
         attr_destroy(attribs);
-        tag_destroy(1, (void **)&tag);
+        tag_destroy(tag, 0, NULL);
         pdebug(DEBUG_ERROR,"Unable to create external mutex!");
         return rc;
     }
@@ -317,7 +321,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     if(!tag->impl_tag) {
         pdebug(DEBUG_ERROR,"Unable to create tag for protocol %s!",protocol);
         attr_destroy(attribs);
-        tag_destroy(1, (void **)&tag);
+        tag_destroy(tag, 0, NULL);
         return PLCTAG_ERR_CREATE;
     }
 
@@ -338,11 +342,10 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
         rc = PLCTAG_STATUS_OK;
     }
 
-    if(rc == PLCTAG_STATUS_OK) {
-        tag_id tmp = tag->id;
-
-        return tmp;
+    if(rc == PLCTAG_STATUS_OK || rc == PLCTAG_STATUS_PENDING) {
+        return tag->id;
     } else {
+        /* tag is bad */
         return rc;
     }
 }
@@ -1289,24 +1292,28 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
  ************************** Helper Functions ***************************
  **********************************************************************/
 
-void tag_destroy(int arg_count, void **args)
+void tag_destroy(void *tag_arg, int arg_count, void **args)
 {
     tag_p tag = NULL;
 
+    (void)args;
+
     pdebug(DEBUG_INFO,"Starting");
 
-    if(arg_count <= 0 || !args) {
-        pdebug(DEBUG_WARN,"No args or NULL pointer passed!");
+    if(arg_count != 0) {
+        pdebug(DEBUG_WARN,"No args or NULL pointer passed! arg count=%d", arg_count);
         return;
     }
 
-    tag = args[0];
+    tag = tag_arg;
 
     if(tag) {
         mutex_destroy(&tag->api_mut);
         mutex_destroy(&tag->external_mut);
         rc_dec(tag->impl_tag);
     }
+
+    pdebug(DEBUG_INFO,"Done.");
 }
 
 

@@ -52,7 +52,7 @@ static int get_double(impl_tag_p tag, int offset, int size, double *val);
 static int set_double(impl_tag_p tag, int offset, int size, double val);
 
 
-static void tag_destroy(int arg_count, void **args);
+static void tag_destroy(void *tag_arg, int arg_count, void **args);
 
 /*
 VTable:
@@ -117,7 +117,7 @@ impl_tag_p system_tag_create(attr attribs)
         tag->base_tag.vtable = &version_tag_vtable;
     } else {
         pdebug(DEBUG_WARN,"Unknown tag %s!",name);
-        tag_destroy(1, (void**)&tag);
+        tag_destroy(tag, 0, NULL);
         return NULL;
     }
 
@@ -278,8 +278,9 @@ int set_double(impl_tag_p tag, int offset, int size, double val)
 
 
 
-void tag_destroy(int arg_count, void **args)
+void tag_destroy(void *tag_arg, int arg_count, void **args)
 {
+    (void)tag_arg;
     (void)arg_count;
     (void)args;
 

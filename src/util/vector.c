@@ -80,7 +80,7 @@ vector_p vector_create(int capacity, int max_inc)
 
 int vector_length(vector_p vec)
 {
-    pdebug(DEBUG_DETAIL,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     /* check to see if the vector ref is valid */
     if(!vec) {
@@ -88,7 +88,7 @@ int vector_length(vector_p vec)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    pdebug(DEBUG_DETAIL,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return vec->len;
 }
@@ -99,7 +99,7 @@ int vector_put(vector_p vec, int index, void * data)
 {
     int rc = PLCTAG_STATUS_OK;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     /* check to see if the vector ref is valid */
     if(!vec) {
@@ -126,7 +126,7 @@ int vector_put(vector_p vec, int index, void * data)
         vec->len = index+1;
     }
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return rc;
 }
@@ -134,7 +134,7 @@ int vector_put(vector_p vec, int index, void * data)
 
 void * vector_get(vector_p vec, int index)
 {
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     /* check to see if the vector ref is valid */
     if(!vec) {
@@ -147,7 +147,7 @@ void * vector_get(vector_p vec, int index)
         return NULL;
     }
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return vec->data[index];
 }
@@ -157,7 +157,7 @@ void * vector_remove(vector_p vec, int index)
 {
     void * result = NULL;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_DETAIL,"Starting");
 
     /* check to see if the vector ref is valid */
     if(!vec) {
@@ -182,7 +182,7 @@ void * vector_remove(vector_p vec, int index)
     /* adjust the length to the new size */
     vec->len--;
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_DETAIL,"Done");
 
     return result;
 }
@@ -191,6 +191,8 @@ void * vector_remove(vector_p vec, int index)
 
 int vector_destroy(vector_p vec)
 {
+    pdebug(DEBUG_INFO,"Starting.");
+
     if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer passed!");
         return PLCTAG_ERR_NULL_PTR;
@@ -198,6 +200,8 @@ int vector_destroy(vector_p vec)
 
     mem_free(vec->data);
     mem_free(vec);
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
