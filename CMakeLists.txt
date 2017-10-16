@@ -119,6 +119,8 @@ MESSAGE("BASE_CXX_FLAGS=${BASE_CXX_FLAGS}")
 # set up the library sources
 set ( libplctag_SRCS "${platform_SRC_PATH}/platform.c"
                      "${platform_SRC_PATH}/platform.h"
+                     "${util_SRC_PATH}/async_tcp_socket.c"
+                     "${util_SRC_PATH}/async_tcp_socket.h"
                      "${util_SRC_PATH}/attr.c"
                      "${util_SRC_PATH}/attr.h"
                      "${util_SRC_PATH}/bytebuf.c"

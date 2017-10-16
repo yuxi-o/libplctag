@@ -98,7 +98,11 @@ typedef void *(*thread_func_t)(void *arg);
 extern int thread_create(thread_p *t, thread_func_t func, int stacksize, void *arg);
 extern void thread_stop(void) __attribute__((noreturn));
 extern int thread_join(thread_p t);
+extern int thread_detach();
 extern int thread_destroy(thread_p *t);
+
+#define THREAD_FUNC(func) void *func(void *arg)
+#define THREAD_RETURN(val) return (void *)val;
 
 #define THREAD_LOCAL __thread
 

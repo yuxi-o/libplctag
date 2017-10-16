@@ -156,12 +156,12 @@ extern void mem_move(void *dest, void *src, int size)
 
 int mem_cmp(void *src1, int src1_size, void *src2, int src2_size)
 {
-	/* short circuit the comparison if the blocks are different lengths */
-	if(src1_size != src2_size) {
-		return (src1_size - src2_size);
-	}
+    /* short circuit the comparison if the blocks are different lengths */
+    if(src1_size != src2_size) {
+        return (src1_size - src2_size);
+    }
 
-	return memcmp(src1, src2, src1_size);
+    return memcmp(src1, src2, src1_size);
 }
 
 
@@ -211,11 +211,11 @@ extern int str_cmp_i(const char *first, const char *second)
  */
 extern int str_copy(char *dst, int dst_size, const char *src)
 {
-	if (!src) {
-		return PLCTAG_ERR_NULL_PTR;
-	}
+    if (!src) {
+        return PLCTAG_ERR_NULL_PTR;
+    }
 
-	/* FIXME - if there is not enough room, truncate the string. */
+    /* FIXME - if there is not enough room, truncate the string. */
     strncpy_s(dst, dst_size, src, _TRUNCATE);
 
     return 0;
@@ -612,6 +612,23 @@ int thread_join(thread_p t)
 
     return PLCTAG_STATUS_OK;
 }
+
+
+
+
+/*
+ * thread_detach
+ *
+ * Detach the thread.  You cannot call thread_join on a detached thread!
+ */
+
+extern int thread_detach()
+{
+    /* FIXME - it does not look like you can do this on Windows??? */
+
+    return PLCTAG_STATUS_OK;
+}
+
 
 
 

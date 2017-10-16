@@ -149,7 +149,11 @@ typedef struct thread_t *thread_p;
 extern int thread_create(thread_p *t, LPTHREAD_START_ROUTINE func, int stacksize, void *arg);
 extern void thread_stop(void);
 extern int thread_join(thread_p t);
+extern int thread_detach();
 extern int thread_destroy(thread_p *t);
+
+#define THREAD_FUNC(func) DWORD __stdcall func(LPVOID arg)
+#define THREAD_RETURN(val) return (DWORD)val;
 
 #define THREAD_LOCAL __declspec(thread)
 

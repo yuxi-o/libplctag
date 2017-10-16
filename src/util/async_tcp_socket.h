@@ -18,22 +18,15 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-#ifndef __UTIL_BYTEBUF_H__
-#define __UTIL_BYTEBUF_H__
+#ifndef __UTIL_ASYNC_SOCKET_H__
+#define __UTIL_ASYNC_SOCKET_H__ 1
 
-#include <stdint.h>
-#include <util/refcount.h>
 
-typedef struct bytebuf_t *bytebuf_p;
+typedef struct async_socket_t *async_socket_p;
 
-extern bytebuf_p bytebuf_create(int initial_cap);
-extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
-//~ extern int bytebuf_put(bytebuf_p buf, uint8_t data);
-//~ extern int bytebuf_get(bytebuf_p buf, uint8_t *data);
-extern int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val);
-extern int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val);
-extern int bytebuf_size(bytebuf_p buf);
-extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
-extern int bytebuf_destroy(bytebuf_p buf);
+extern async_socket_p async_tcp_socket_create(const char *host, int port);
+extern int async_tcp_socket_status(async_socket_p async_socket);
+extern int async_tcp_socket_write(async_socket_p async_socket, uint8_t *data, int data_len);
+extern int async_tcp_socket_read(async_socket_p async_socket, uint8_t *data, int data_len);
 
 #endif

@@ -167,6 +167,81 @@ int bytebuf_get(bytebuf_p buf, uint8_t *data)
 }
 
 
+int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val)
+{
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    if(!buf) {
+        pdebug(DEBUG_WARN,"Called with null or invalid reference!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    /* make sure we have data for the read. */
+    if(buf->cursor < 0 || (buf->cursor + size) > buf->size) {
+        pdebug(DEBUG_ERROR, "Cursor out of bounds!");
+        return PLCTAG_ERR_OUT_OF_BOUNDS;
+    }
+
+    /* start the process by zeroing out the value. */
+    *val = 0;
+
+    /* Start with the most significant byte. */
+    for(int i = size-1; i >= 0; i--) {
+        int index = buf->cursor + byte_order[i];
+
+        /* rotate the end value */
+        *val = *val << 8;
+
+        if(i == (size - 1)) {
+            /* this is the sign byte. */
+            *val = (int8_t)(buf->bytes[index]);
+        } else {
+            /* just regular bytes */
+            *val = (int64_t)((uint64_t)(*val) | (uint64_t)(buf->bytes[index]));
+        }
+    }
+
+    buf->cursor = buf->cursor + size;
+
+    pdebug(DEBUG_DETAIL,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val)
+{
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    if(!buf) {
+        pdebug(DEBUG_WARN,"Called with null or invalid reference!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    /* make sure we have data for the read. */
+    if(buf->cursor < 0 || (buf->cursor + size) > buf->size) {
+        pdebug(DEBUG_ERROR, "Cursor out of bounds!");
+        return PLCTAG_ERR_OUT_OF_BOUNDS;
+    }
+
+    /* Start with the least significant byte. */
+    for(int i = 0; i < size; i++) {
+        int index = buf->cursor + byte_order[i];
+
+        buf->bytes[index] = (uint8_t)((uint64_t)val & (uint64_t)0xFF);
+
+        val = val >> 8;
+    }
+
+    buf->cursor = buf->cursor + size;
+
+    pdebug(DEBUG_DETAIL,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+
 int bytebuf_size(bytebuf_p buf)
 {
     pdebug(DEBUG_DETAIL,"Starting.");

@@ -133,12 +133,12 @@ extern void mem_move(void *dest, void *src, int size)
 
 int mem_cmp(void *src1, int src1_size, void *src2, int src2_size)
 {
-	/* short circuit the comparison if the blocks are different lengths */
-	if(src1_size != src2_size) {
-		return (src1_size - src2_size);
-	}
+    /* short circuit the comparison if the blocks are different lengths */
+    if(src1_size != src2_size) {
+        return (src1_size - src2_size);
+    }
 
-	return memcmp(src1, src2, src1_size);
+    return memcmp(src1, src2, src1_size);
 }
 
 
@@ -556,6 +556,22 @@ int thread_join(thread_p t)
 
     return PLCTAG_STATUS_OK;
 }
+
+
+/*
+ * thread_detach
+ *
+ * Detach the thread.  You cannot call thread_join on a detached thread!
+ */
+
+extern int thread_detach()
+{
+    pthread_detach(pthread_self());
+
+    return PLCTAG_STATUS_OK;
+}
+
+
 
 /*
  * thread_destroy
