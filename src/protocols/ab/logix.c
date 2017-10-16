@@ -430,6 +430,8 @@ int abort_operation(impl_tag_p impl_tag)
     return PLCTAG_STATUS_OK;
 }
 
+
+
 int get_size(impl_tag_p impl_tag)
 {
     logix_tag_p tag = (logix_tag_p)impl_tag;
@@ -557,6 +559,8 @@ int get_int(impl_tag_p impl_tag, int offset, int size, int64_t *val)
 
     return rc;
 }
+
+
 
 int set_int(impl_tag_p impl_tag, int offset, int size, int64_t val)
 {
@@ -774,36 +778,11 @@ logix_plc_p get_plc(const char *path)
 
                 plc = resource_get(PLC_RESOURCE_PREFIX, path);
             } else {
-                /* New PLC, start a thread to finish setting it up. */
-                char *dup_name = str_dup(plc_name);
-
-                if(!dup_name) {
-                    pdebug(DEBUG_ERROR,"Unable to duplicate PLC name!");
+                plc->sock = async_tcp_socket_create(plc->host, plc->port);
+                if(!plc->sock) {
+                    pdebug(DEBUG_ERROR,"Unable to create new socket!");
                     plc = rc_dec(plc);
-                } else {
-                    int rc = PLCTAG_STATUS_OK;
-
-                    rc = thread_create(&plc->worker_thread, plc_setup_handler, 32*1024, dup_name);
-                    if(rc != PLCTAG_STATUS_OK) {
-                        pdebug(DEBUG_ERROR,"Unable to create PLC setup thread!");
-                        /*
-                         * These are really the same pointer!
-                         * We do this twice since we took another reference
-                         * to pass it to the thread.
-                         */
-                        mem_free(dup_name);
-                        plc = rc_dec(plc);
-                    }
                 }
-
-                if(!tmp_plc) {
-                    pdebug(DEBUG_WARN,"Unable to get strong reference to PLC!")
-                    rc_dec(plc);
-                } else {
-
-
-                }
-
             }
         } else {
             /* create failed! */
@@ -819,31 +798,6 @@ logix_plc_p get_plc(const char *path)
 }
 
 
-THREAD_FUNC(plc_setup_handler)
-{
-    logix_plc_p plc  = NULL;
-    int path_len = 0;
-    char *host  = NULL;
-    int port = AB_EIP_DEFAULT_PORT;
-
-    thread_detach();
-
-    if(!plc_arg) {
-        pdebug(DEBUG_WARN,"PLC monitor PT started with null args pointer!");
-        thread_stop();
-    }
-
-    plc = arg;
-
-    for(int i=0; i < str_)
-
-
-
-    rc_dec(plc);
-
-    THREAD_RETURN(0);
-}
-
 
 /*
  * path looks like "192.168.1.10<:port>,path,to,cpu"
@@ -852,6 +806,7 @@ THREAD_FUNC(plc_setup_handler)
 logix_plc_p create_plc(const char *path)
 {
     logix_plc_p plc = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     plc = rc_alloc(sizeof(logix_plc_t), logix_plc_destroy, 0);
     if(!plc) {
@@ -864,9 +819,9 @@ logix_plc_p create_plc(const char *path)
     sock_p sock;
     int status;
 
-    plc->path = str_dup(path);
-    if(!plc->path) {
-        pdebug(DEBUG_ERROR,"Unable to copy path!");
+    rc = parse_path(path, &plc->host, &plc->port, &plc->path);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_ERROR,"Unable to parse path!");
         rc_dec(plc);
         return NULL;
     }
@@ -878,4 +833,174 @@ logix_plc_p create_plc(const char *path)
     plc->state = STARTING;
 
     return plc;
+}
+
+char *copy_string(const char *src, int len)
+{
+    char *result = mem_alloc(len+1);
+
+    if(!result) {
+        pdebug(DEBUG_ERROR,"Unable to allocate memory for new string!");
+        return NULL;
+    }
+
+    str_copy(result, len, src);
+    result[len-1] = 0;
+
+    return result;
+}
+
+
+
+/*
+path ::= host (: port) (local_path)
+host ::= IPaddr | hostname
+port ::= number
+local_path ::= (, number)*
+IPaddr ::= number . number . number . number
+hostname ::= [a-zA-Z]+ ([^,:])*
+number ::= [0-9]+
+*/
+
+int parse_path(const char *full_path, char **host, int *port, char **local_path)
+{
+    int len;
+    char *p, *q;
+    char tmp_char;
+    char *tmp_path = str_dup(full_path);
+
+    pdebug(DEBUG_INFO,"Starting");
+
+    if(!tmp_path) {
+        pdebug(DEBUG_ERROR,"Unable to copy path string!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
+    /* scan for the end of the host/IP address. */
+    p = tmp_path;
+
+    q = match_host(p);
+    if(!q) {
+        pdebug(DEBUG_WARN,"Bad hostname/ip format in path!");
+        mem_free(tmp_path);
+        return PLCTAG_ERR_BAD_PARAM;
+    }
+
+    tmp_char = *q;
+    *q = 0;
+    *host = str_dup(p);
+    if(!*host) {
+        pdebug(DEBUG_ERROR,"Unable to duplicate hostname string!");
+        mem_free(tmp_path);
+        return PLCTAG_ERR_BAD_PARAM;
+    }
+    *q = tmp_char;
+    p = q;
+
+    q = match_port(p);
+    if(q) {
+        tmp_char = *q;
+        *q = 0;
+        rc = str_to_int(p, port);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Bad port number format!");
+            mem_free(tmp_path);
+            return PLCTAG_ERR_BAD_PARAM;
+        }
+        *q = tmp_char;
+        p = q;
+    }
+
+    q = match_local_path(p);
+    if(!q) {
+        pdebug(DEBUG_WARN,"Bad local path format!");
+        mem_free(tmp_path);
+        return PLCTAG_ERR_BAD_PARAM;
+    }
+
+    *local_path = str_dup(p);
+    if(!*local_path) {
+        pdebug(DEBUG_ERROR,"Unable to duplicate local path string.");
+        mem_free(tmp_path);
+        return PLCTAG_ERR_BAD_PARAM;
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+char *match_host(char *p) {
+    /* try IP address. */
+    pdebug(DEBUG_DETAIL,"Starting.");
+    char *q = match_ip(p, hostname);
+
+    if(!q) {
+        q = match_hostname(p);
+    }
+
+    pdebug(DEBUG_DETAIL,"Done.");
+    return q;
+}
+
+char *match_ip(char *p) {
+    int octet = 0;
+    char *q = match_number(p, &octet);
+
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    if(!q) {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    if(*q != '.') {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    q = match_number(p, &octet);
+    if(!q) {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    if(*q != '.') {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    q = match_number(p, &octet);
+    if(!q) {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    if(*q != '.') {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    q = match_number(p, &octet);
+    if(!q) {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+
+    pdebug(DEBUG_DETAIL,"Done.");
+
+    return q;
+}
+
+
+char *match_hostname(char *p)
+{
+    char *q = p;
+
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    while(*q && *q != ':' && *q != ',') {
+        q++;
+    }
+
+    if(q == p) {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL
+    }
+
+    return q;
 }

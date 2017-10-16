@@ -159,6 +159,11 @@ int async_tcp_socket_read(async_socket_p async_socket, uint8_t *data, int data_l
         async->sock = NULL;
     }
 
+    if(async_sock->host) {
+        mem_free(async_sock->host);
+        async_sock->host = NULL;
+    }
+
     pdebug(DEBUG_INFO,"Done.");
  }
 
