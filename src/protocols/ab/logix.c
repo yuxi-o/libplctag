@@ -108,6 +108,12 @@ struct impl_vtable {
 static PT_FUNC(setup_tag);
 static void setup_tag_cleanup(void *tag_arg, int arg_count, void **args);
 static void logix_tag_destroy(void *tag_arg, int arg_count, void **args);
+static int parse_path(const char *full_path, char **host, int *port, char **local_path);
+static char *match_host(char *p);
+static char *match_ip(char *p);
+static char *match_hostname(char *p);
+static char *match_local_path(char *p);
+static char *match_number(char *p);
 
 //~ static rc_plc find_plc(attr attribs);
 //~ static rc_plc create_plc(attr attribs);
@@ -813,11 +819,6 @@ logix_plc_p create_plc(const char *path)
         pdebug(DEBUG_ERROR,"Unable to allocate PLC struct!");
         return NULL;
     }
-    char *path;
-    lock_t lock;
-    int resource_count;
-    sock_p sock;
-    int status;
 
     rc = parse_path(path, &plc->host, &plc->port, &plc->path);
     if(rc != PLCTAG_STATUS_OK) {
@@ -835,21 +836,6 @@ logix_plc_p create_plc(const char *path)
     return plc;
 }
 
-char *copy_string(const char *src, int len)
-{
-    char *result = mem_alloc(len+1);
-
-    if(!result) {
-        pdebug(DEBUG_ERROR,"Unable to allocate memory for new string!");
-        return NULL;
-    }
-
-    str_copy(result, len, src);
-    result[len-1] = 0;
-
-    return result;
-}
-
 
 
 /*
@@ -862,11 +848,24 @@ hostname ::= [a-zA-Z]+ ([^,:])*
 number ::= [0-9]+
 */
 
+
+char *str_dup_from_to(char *from, char *to)
+{
+    char tmp;
+    char *result;
+
+    tmp = *to;
+    *to = 0;
+    result = str_dup(from);
+    *to = tmp;
+
+    return result;
+}
+
 int parse_path(const char *full_path, char **host, int *port, char **local_path)
 {
     int len;
     char *p, *q;
-    char tmp_char;
     char *tmp_path = str_dup(full_path);
 
     pdebug(DEBUG_INFO,"Starting");
@@ -886,21 +885,20 @@ int parse_path(const char *full_path, char **host, int *port, char **local_path)
         return PLCTAG_ERR_BAD_PARAM;
     }
 
-    tmp_char = *q;
-    *q = 0;
-    *host = str_dup(p);
+    *host = str_dup_from_to(p, q);
     if(!*host) {
         pdebug(DEBUG_ERROR,"Unable to duplicate hostname string!");
         mem_free(tmp_path);
         return PLCTAG_ERR_BAD_PARAM;
     }
-    *q = tmp_char;
     p = q;
 
+    /* port is optional */
     q = match_port(p);
     if(q) {
-        tmp_char = *q;
+        char tmp_char = *q;
         *q = 0;
+        pdebug(DEBUG_DETAIL,"Matched port %s",p);
         rc = str_to_int(p, port);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Bad port number format!");
@@ -918,19 +916,22 @@ int parse_path(const char *full_path, char **host, int *port, char **local_path)
         return PLCTAG_ERR_BAD_PARAM;
     }
 
-    *local_path = str_dup(p);
+    *local_path = str_dup_from_to(p,q);
     if(!*local_path) {
         pdebug(DEBUG_ERROR,"Unable to duplicate local path string.");
         mem_free(tmp_path);
         return PLCTAG_ERR_BAD_PARAM;
     }
 
+    mem_free(tmp_path);
+
     pdebug(DEBUG_INFO,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
 
-char *match_host(char *p) {
+char *match_host(char *p)
+{
     /* try IP address. */
     pdebug(DEBUG_DETAIL,"Starting.");
     char *q = match_ip(p, hostname);
@@ -943,9 +944,9 @@ char *match_host(char *p) {
     return q;
 }
 
-char *match_ip(char *p) {
-    int octet = 0;
-    char *q = match_number(p, &octet);
+char *match_ip(char *p)
+{
+    char *q = match_number(p);
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
@@ -957,7 +958,7 @@ char *match_ip(char *p) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
     }
-    q = match_number(p, &octet);
+    q = match_number(p);
     if(!q) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
@@ -966,7 +967,7 @@ char *match_ip(char *p) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
     }
-    q = match_number(p, &octet);
+    q = match_number(p);
     if(!q) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
@@ -975,7 +976,7 @@ char *match_ip(char *p) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
     }
-    q = match_number(p, &octet);
+    q = match_number(p);
     if(!q) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
@@ -1000,6 +1001,53 @@ char *match_hostname(char *p)
     if(q == p) {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL
+    }
+
+    pdebug(DEBUG_DETAIL,"Done.");
+
+    return q;
+}
+
+/* FIXME - this should match IP addresses too! */
+char *match_local_path(char *p)
+{
+    char *q = p;
+
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    while(*q && (isdigit(*q) || *q == ',')) {
+        q++;
+    }
+
+    if(q == p) {
+        pdebug(DEBUG_WARN,"A local path is required!");
+        return NULL;
+    }
+
+    if(!isdigit(*q) && *q != ',') {
+        pdebug(DEBUG_WARN,"A local path must be a comma delimited list of numbers!");
+        return NULL;
+    }
+
+    pdebug(DEBUG_DETAIL,"Done.");
+
+    return q;
+}
+
+
+char *match_number(char *p)
+{
+    char *q = p;
+
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    while(*q && isdigit(q)) {
+        q++;
+    }
+
+    if(q == p) {
+        pdebug(DEBUG_WARN,"Bad number format!");
+        return NULL;
     }
 
     return q;
