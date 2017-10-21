@@ -112,6 +112,16 @@ int bytebuf_set_cursor(bytebuf_p buf, int cursor)
     return PLCTAG_STATUS_OK;
 }
 
+int bytebuf_get_cursor(bytebuf_p buf)
+{
+    if(!buf) {
+        pdebug(DEBUG_WARN,"Called with null pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    return buf->cursor;
+}
+
 
 int bytebuf_put(bytebuf_p buf, uint8_t data)
 {
@@ -268,8 +278,31 @@ uint8_t *bytebuf_get_buffer(bytebuf_p buf)
 
     pdebug(DEBUG_DETAIL, "Done.");
 
-    return &buf->bytes[0];
+    return &buf->bytes[buf->cursor];
 }
+
+
+
+int bytebuf_reset(bytebuf_p buf)
+{
+    pdebug(DEBUG_DETAIL,"Starting.");
+
+    if(!buf) {
+        pdebug(DEBUG_WARN,"Called with null or invalid reference!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    buf->size = 0;
+    buf->cursor = 0;
+
+    mem_set(buf->bytes, 0, buf->capacity);
+
+    pdebug(DEBUG_DETAIL, "Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+
 
 
 

@@ -25,7 +25,7 @@
 #include <util/hashtable.h>
 #include <util/refcount.h>
 #include <ab/ab.h>
-#include <ab/logix.h>
+#include <ab/logix/logix.h>
 
 
 

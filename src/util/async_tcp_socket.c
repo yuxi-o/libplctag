@@ -19,7 +19,8 @@
  ***************************************************************************/
 
 #include <platform.h>
-#include <util/async_socket.h>
+#include <lib/libplctag.h>
+#include <util/async_tcp_socket.h>
 #include <util/debug.h>
 #include <util/refcount.h>
 
@@ -83,7 +84,7 @@ async_socket_p async_tcp_socket_create(const char *host, int port)
         return NULL;
     }
 
-    return async_socket;
+    return async_sock;
 }
 
 
@@ -116,7 +117,7 @@ int async_tcp_socket_write(async_socket_p async_socket, uint8_t *data, int data_
         return async_socket->status;
     }
 
-    return socket_write(async_sock->sock, data, data_len);
+    return socket_write(async_socket->sock, data, data_len);
 }
 
 
@@ -132,7 +133,7 @@ int async_tcp_socket_read(async_socket_p async_socket, uint8_t *data, int data_l
         return async_socket->status;
     }
 
-    return socket_read(async_sock->sock, data, data_len);
+    return socket_read(async_socket->sock, data, data_len);
 }
 
 
@@ -146,6 +147,9 @@ int async_tcp_socket_read(async_socket_p async_socket, uint8_t *data, int data_l
  {
     async_socket_p async_sock = sock_arg;
 
+    (void)arg_count;
+    (void)args;
+
     pdebug(DEBUG_INFO,"Starting.");
 
     if(!async_sock) {
@@ -156,7 +160,7 @@ int async_tcp_socket_read(async_socket_p async_socket, uint8_t *data, int data_l
     if(async_sock->sock) {
         socket_close(async_sock->sock);
         socket_destroy(&async_sock->sock);
-        async->sock = NULL;
+        async_sock->sock = NULL;
     }
 
     if(async_sock->host) {

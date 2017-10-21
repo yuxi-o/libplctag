@@ -386,10 +386,10 @@ extern char **str_split(const char *str, const char *sep)
 
 
 
-struct plc_thread_t {
-    HANDLE h_thread;
-    HANDLE h_mutex;
-};
+//~ struct plc_thread_t {
+    //~ HANDLE h_thread;
+    //~ HANDLE h_mutex;
+//~ };
 
 
 
@@ -583,6 +583,20 @@ extern int thread_create(thread_p *t, LPTHREAD_START_ROUTINE func, int stacksize
 void thread_stop(void)
 {
     ExitThread((DWORD)0);
+}
+
+
+/*
+ * thread_kill()
+ *
+ * Stop the indicated thread completely.
+ */
+
+void thread_kill(thread_p t)
+{
+    if(t) {
+        TerminateThread(t->h_thread, (DWORD)0);
+    }
 }
 
 

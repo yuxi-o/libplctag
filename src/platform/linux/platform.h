@@ -97,6 +97,7 @@ typedef struct thread_t *thread_p;
 typedef void *(*thread_func_t)(void *arg);
 extern int thread_create(thread_p *t, thread_func_t func, int stacksize, void *arg);
 extern void thread_stop(void) __attribute__((noreturn));
+extern void thread_kill(thread_p t);
 extern int thread_join(thread_p t);
 extern int thread_detach();
 extern int thread_destroy(thread_p *t);

@@ -148,6 +148,7 @@ typedef struct thread_t *thread_p;
 //typedef DWORD /*WINAPI*/ (*thread_func_t)(void *lpParam );
 extern int thread_create(thread_p *t, LPTHREAD_START_ROUTINE func, int stacksize, void *arg);
 extern void thread_stop(void);
+extern void thread_kill(thread_p t);
 extern int thread_join(thread_p t);
 extern int thread_detach();
 extern int thread_destroy(thread_p *t);

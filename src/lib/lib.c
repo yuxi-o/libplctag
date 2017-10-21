@@ -31,7 +31,7 @@
 #include <util/debug.h>
 #include <util/hashtable.h>
 #include <util/resource.h>
-#include <util/pt.h>
+#include <util/job.h>
 #include <system/system.h>
 #include <ab/ab.h>
 
@@ -1468,10 +1468,10 @@ int initialize_modules(void)
         }
 
         if(rc == PLCTAG_STATUS_OK) {
-            rc = pt_service_init();
+            rc = job_service_init();
 
             if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_ERROR,"Protothread utility failed to initialize correctly!");
+                pdebug(DEBUG_ERROR,"Job utility failed to initialize correctly!");
             }
         }
 
@@ -1511,7 +1511,7 @@ void teardown_modules(void)
 {
     ab_teardown();
 
-    pt_service_teardown();
+    job_service_teardown();
 
     resource_service_teardown();
 

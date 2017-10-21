@@ -3,7 +3,7 @@
  *   Author Kyle Hayes  kyle.hayes@gmail.com                               *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU Lesser General Public License as        *
+ *   it under the terms of the GNU Library/Lesser General Public License as*
  *   published by the Free Software Foundation; either version 2 of the    *
  *   License, or (at your option) any later version.                       *
  *                                                                         *
@@ -18,22 +18,30 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-#ifndef __UTIL_BYTEBUF_H__
-#define __UTIL_BYTEBUF_H__
+/*
+ * Implement a kind of thread pool for executing jobs that might block.
+ */
 
-#include <stdint.h>
-#include <util/refcount.h>
+#ifndef __UTIL__JOB_H__
+#define __UTIL__JOB_H__
 
-typedef struct bytebuf_t *bytebuf_p;
+#include <platform.h>
 
-extern bytebuf_p bytebuf_create(int initial_cap);
-extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
-extern int bytebuf_get_cursor(bytebuf_p buf);
-extern int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val);
-extern int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val);
-extern int bytebuf_size(bytebuf_p buf);
-extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
-extern int bytebuf_reset(bytebuf_p buf);
-extern int bytebuf_destroy(bytebuf_p buf);
+typedef enum { JOB_DONE, JOB_RERUN } job_exit_type;
+
+
+typedef struct job_t *job_p;
+
+
+typedef job_exit_type (*job_function)(int arg_count, void **arg);
+
+extern job_p job_create(job_function func, int is_blocking, int num_args, ...);
+
+
+/* needed for set up of the PT service */
+extern int job_service_init(void);
+extern void job_service_teardown(void);
+
+
 
 #endif

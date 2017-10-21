@@ -26,7 +26,7 @@
 
 extern void *resource_get(const char *name);
 extern int resource_put(const char *name, void *resource);
-//~ extern int resource_remove(const char *name);
+extern int resource_remove(const char *name);
 
 #define resource_make_name(...) resource_make_name_impl(COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
 extern char *resource_make_name_impl(int num_args, ...);

@@ -18,22 +18,12 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-#ifndef __UTIL_BYTEBUF_H__
-#define __UTIL_BYTEBUF_H__
+#ifndef __PROTOCOLS_AB_LOGIX_SESSION_H__
+#define __PROTOCOLS_AB_LOGIX_SESSION_H__ 1
 
-#include <stdint.h>
-#include <util/refcount.h>
+typedef struct eip_session_t *eip_session_p;
 
-typedef struct bytebuf_t *bytebuf_p;
-
-extern bytebuf_p bytebuf_create(int initial_cap);
-extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
-extern int bytebuf_get_cursor(bytebuf_p buf);
-extern int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val);
-extern int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val);
-extern int bytebuf_size(bytebuf_p buf);
-extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
-extern int bytebuf_reset(bytebuf_p buf);
-extern int bytebuf_destroy(bytebuf_p buf);
+extern eip_session_p get_session(const char *path);
+extern int get_session_status(eip_session_p session);
 
 #endif

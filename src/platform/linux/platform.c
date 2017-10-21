@@ -531,6 +531,19 @@ void thread_stop(void)
 
 
 /*
+ * thread_kill()
+ *
+ * Kill another thread.
+ */
+
+void thread_kill(thread_p t)
+{
+    if(t) {
+        pthread_cancel(t->p_thread);
+    }
+}
+
+/*
  * thread_join()
  *
  * Wait for the argument thread to stop and then continue.
