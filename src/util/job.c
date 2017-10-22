@@ -27,12 +27,15 @@
 #include <util/refcount.h>
 
 
-#define MIN_JOBS (100)
-#define MIN_JOB_THREADS (20)
+#define MIN_NONBLOCKING_JOBS (100)
+#define MIN_NONBLOCKING_THREADS (4)
+#define MIN_BLOCKING_JOBS (20)
+#define MIN_BLOCKING_THREADS (8)
 
 typedef enum { WAITING, RUNNING, DEAD } job_status;
 
 struct job_t {
+    int is_blocking;
     job_status status;
     int arg_count;
     void** args;
@@ -40,15 +43,16 @@ struct job_t {
 };
 
 
-static volatile vector_p job_list = NULL;
-static volatile vector_p thread_list = NULL;
+static volatile vector_p nonblocking_jobs = NULL;
+static volatile vector_p nonblocking_threads = NULL;
+static volatile vector_p blocking_jobs = NULL;
+static volatile vector_p blocking_threads = NULL;
 
 /* job mutex protecting the job and thread lists. */
 static volatile mutex_p job_mutex = NULL;
 
 /* job runner thread */
 THREAD_FUNC(job_runner);
-THREAD_FUNC(blocking_runner);
 
 
 static volatile int library_terminating = 0;
@@ -72,10 +76,11 @@ job_p job_create(job_function func, int is_blocking, int arg_count, ...)
         return NULL;
     }
 
+    entry->is_blocking = is_blocking;
     entry->status = RUNNING;
     entry->func = func;
     entry->arg_count = arg_count;
-    entry->args = (void **)(entry+1); /* point past the PT struct. */
+    entry->args = (void **)(entry+1); /* point past the job struct. */
 
     /* fill in the extra args. */
     va_start(va, arg_count);
@@ -84,30 +89,18 @@ job_p job_create(job_function func, int is_blocking, int arg_count, ...)
     }
     va_end(va);
 
-    if(is_blocking) {
-        thread_p t;
-        status = thread_create((thread_p*)&t, blocking_runner, 32*1024, entry);
-
-        if(status != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_ERROR,"Unable to create new blocking job runner!");
-        } else {
-            /* FIXME - catch return code! */
-            status = vector_put(thread_list, vector_length(thread_list), t);
-            if(status != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_ERROR,"Unable to insert new thread into list!");
-                thread_kill(t);
-                thread_destroy(&t);
+    critical_block(job_mutex) {
+        /* just insert at the end. */
+        if(is_blocking) {
+            if((status = vector_put(blocking_jobs, vector_length(blocking_jobs), entry)) != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_ERROR,"Unable to insert new job into blocking job list!");
             }
-        }
-    } else {
-        critical_block(job_mutex) {
-            /* just insert at the end. */
-            if((status = vector_put(job_list, vector_length(job_list), entry)) != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_ERROR,"Unable to insert new job into list!");
+        } else {
+            if((status = vector_put(nonblocking_jobs, vector_length(nonblocking_jobs), entry)) != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_ERROR,"Unable to insert new job into nonblocking job list!");
             }
         }
     }
-
 
     /* if we did not insert it into the job list successfully, punt. */
     if(status != PLCTAG_STATUS_OK) {
@@ -122,13 +115,16 @@ job_p job_create(job_function func, int is_blocking, int arg_count, ...)
 
 THREAD_FUNC(job_runner)
 {
-    (void)arg;
+    vector_p job_list = arg;
 
     pdebug(DEBUG_INFO,"Job Runner starting.");
 
-    thread_detach();
+    if(!job_list) {
+        pdebug(DEBUG_ERROR,"Job list is NULL!");
+        THREAD_RETURN(0);
+    }
 
-    while(1) {
+    while(!library_terminating) {
         /* scan over all the entries looking for one that is valid and not running. */
         int index = 0;
         int done = 0;
@@ -169,45 +165,26 @@ THREAD_FUNC(job_runner)
                 pdebug(DEBUG_DETAIL,"Calling job function");
                 if(job->func(job->arg_count, job->args) == JOB_DONE) {
                     job->status = DEAD;
+                } else {
+                    /* mark it as ready to run. */
+                    job->status = WAITING;
                 }
-
-                /* do not rerun the job again. */
-                index++;
 
                 /* release the reference. */
                 rc_dec(job);
+
+                /* do not rerun that job again right away. */
+                index++;
             }
-        } while(!done);
+        } while(!library_terminating && !done);
 
         /* reschedule the CPU. */
-        sleep_ms(1);
+        if(!library_terminating) {
+            sleep_ms(1);
+        }
     }
 
-    pdebug(DEBUG_DETAIL,"Job Runner thread function exiting.");
-
-    THREAD_RETURN(0);
-}
-
-
-THREAD_FUNC(blocking_runner)
-{
-    job_p job = arg;
-
-    thread_detach();
-
-    if(!job) {
-        pdebug(DEBUG_WARN,"Job is NULL!");
-        thread_stop();
-    }
-
-    /* run it until done */
-    while(job->func(job->arg_count, job->args) == JOB_RERUN) {
-        ; /* just keep running it. */
-    }
-
-    rc_dec(job);
-
-    /* FIXME - this may leak! */
+    pdebug(DEBUG_DETAIL,"Job runner thread function exiting.");
 
     THREAD_RETURN(0);
 }
@@ -216,12 +193,11 @@ THREAD_FUNC(blocking_runner)
 
 void job_destroy(void *job_arg, int arg_count, void **args)
 {
-    job_p entry = job_arg;
+    job_p job = job_arg;
 
-    (void)arg_count;
     (void)args;
 
-    if(arg_count !=0 || !entry) {
+    if(arg_count !=0 || !job) {
         pdebug(DEBUG_WARN,"Null pointer passed in!");
         return;
     }
@@ -230,20 +206,31 @@ void job_destroy(void *job_arg, int arg_count, void **args)
 
     /* remove the entry from the list. */
     critical_block(job_mutex) {
-        for(int i=0; i < vector_length(job_list); i++) {
-            job_p tmp = vector_get(job_list, i);
+        if(job->is_blocking) {
+            for(int i=0; i < vector_length(blocking_jobs); i++) {
+                job_p tmp = vector_get(blocking_jobs, i);
 
-            if(tmp == entry) {
-                vector_remove(job_list, i);
-                break;
+                if(tmp == job) {
+                    vector_remove(blocking_jobs, i);
+                    break;
+                }
+            }
+        } else {
+            for(int i=0; i < vector_length(nonblocking_jobs); i++) {
+                job_p tmp = vector_get(nonblocking_jobs, i);
+
+                if(tmp == job) {
+                    vector_remove(nonblocking_jobs, i);
+                    break;
+                }
             }
         }
     }
 
     /*
      * the args should be cleaned up by the caller, either by a
-     * registered clean up function or within the PT itself.
-     * The args array is actually allocated along with the PT struct
+     * registered clean up function or within the job itself.
+     * The args array is actually allocated along with the job struct
      * and is deallocated with it by the RC framework.
      */
 }
@@ -270,33 +257,59 @@ int job_service_init(void)
         return rc;
     }
 
-    /* create the vector in which we will have the jobs stored. */
-    job_list = vector_create(MIN_JOBS, MIN_JOBS/4);
-    if(!job_list ) {
-        pdebug(DEBUG_ERROR,"Unable to allocate vector of jobs!");
+    /* create the vectors in which we will have the jobs stored. */
+    nonblocking_jobs = vector_create(MIN_NONBLOCKING_JOBS, MIN_NONBLOCKING_JOBS/4);
+    if(!nonblocking_jobs ) {
+        pdebug(DEBUG_ERROR,"Unable to allocate vector of nonblocking jobs!");
         return PLCTAG_ERR_CREATE;
     }
 
-    /* create the background PT runner thread */
+    blocking_jobs = vector_create(MIN_BLOCKING_JOBS, MIN_BLOCKING_JOBS/4);
+    if(!blocking_jobs ) {
+        pdebug(DEBUG_ERROR,"Unable to allocate vector of blocking jobs!");
+        return PLCTAG_ERR_CREATE;
+    }
+
     /* FIXME - this should be some sort of dynamic number */
-    thread_list = vector_create(MIN_JOB_THREADS,MIN_JOB_THREADS/4);
-    if(!thread_list) {
-        pdebug(DEBUG_ERROR,"Unable to allocate vector of job threads!");
+    nonblocking_threads = vector_create(MIN_NONBLOCKING_THREADS,MIN_NONBLOCKING_THREADS/4);
+    if(!nonblocking_threads) {
+        pdebug(DEBUG_ERROR,"Unable to allocate vector of nonblocking job threads!");
+        return PLCTAG_ERR_CREATE;
+    }
+
+    blocking_threads = vector_create(MIN_BLOCKING_THREADS,MIN_BLOCKING_THREADS/4);
+    if(!blocking_threads) {
+        pdebug(DEBUG_ERROR,"Unable to allocate vector of blocking job threads!");
         return PLCTAG_ERR_CREATE;
     }
 
     critical_block(job_mutex) {
-        for(int i=0; i < MIN_JOB_THREADS; i++) {
+        /* create the nonblocking job threads. */
+        for(int i=0; i < MIN_NONBLOCKING_THREADS; i++) {
             thread_p t = NULL;
 
-            rc = thread_create((thread_p*)&t, job_runner, 32*1024, NULL);
+            rc = thread_create((thread_p*)&t, job_runner, 32*1024, nonblocking_jobs);
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_INFO,"Unable to create job runner thread!");
                 rc = PLCTAG_ERR_CREATE;
                 break;
             }
 
-            vector_put(thread_list,vector_length(thread_list), t);
+            vector_put(nonblocking_threads,vector_length(nonblocking_threads), t);
+        }
+
+        /* create the blocking job threads. */
+        for(int i=0; i < MIN_BLOCKING_THREADS; i++) {
+            thread_p t = NULL;
+
+            rc = thread_create((thread_p*)&t, job_runner, 32*1024, blocking_jobs);
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_INFO,"Unable to create job runner thread!");
+                rc = PLCTAG_ERR_CREATE;
+                break;
+            }
+
+            vector_put(blocking_threads,vector_length(blocking_threads), t);
         }
     }
 
@@ -311,8 +324,7 @@ int job_service_init(void)
  */
 void job_service_teardown(void)
 {
-    pdebug(DEBUG_INFO,"Releasing global Protothread resources.");
-
+    pdebug(DEBUG_INFO,"Releasing Job service resources.");
 
     /*
      * kill all the threads that are remaining.   The whole program is
@@ -321,22 +333,26 @@ void job_service_teardown(void)
 
     pdebug(DEBUG_INFO,"Terminating job threads.");
 
-    critical_block(job_mutex) {
-        for(int i=0; i< vector_length(thread_list); i++) {
-            thread_p t = vector_get(thread_list, i);
-            if(t) {
-                thread_kill(t);
-                thread_destroy(&t);
-            }
-        }
+    library_terminating = 1;
+
+    /* get the non-blocking threads first. */
+    for(int i=0; i < vector_length(nonblocking_threads); i++) {
+        thread_join(vector_get(nonblocking_threads, i));
     }
 
-    pdebug(DEBUG_INFO,"Freeing thread list.");
-    vector_destroy(thread_list);
+    /* now the blocking threads. */
+    for(int i=0; i < vector_length(blocking_threads); i++) {
+        thread_join(vector_get(blocking_threads, i));
+    }
 
-    pdebug(DEBUG_INFO,"Freeing job list.");
-    /* free the vector of PTs */
-    vector_destroy(job_list);
+    pdebug(DEBUG_INFO,"Freeing thread lists.");
+    vector_destroy(nonblocking_threads);
+    vector_destroy(blocking_threads);
+
+    pdebug(DEBUG_INFO,"Freeing job lists.");
+    /* free the vector of jobs */
+    vector_destroy(nonblocking_jobs);
+    vector_destroy(blocking_jobs);
 
     pdebug(DEBUG_INFO,"Freeing job mutex.");
     /* clean up the mutex */
