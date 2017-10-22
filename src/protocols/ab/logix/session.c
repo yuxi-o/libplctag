@@ -336,12 +336,13 @@ int register_session(eip_session_p session)
         return rc;
     }
 
-    /* check the response status */
+    /* check the response type */
     if (command != AB_EIP_REGISTER_SESSION) {
         pdebug(DEBUG_WARN, "EIP unexpected response packet type: %d!", (int)command);
         return PLCTAG_ERR_BAD_DATA;
     }
 
+    /* check response status */
     if (status != (uint32_t)AB_EIP_OK) {
         pdebug(DEBUG_WARN, "EIP command failed, response code: %d", (int)status);
         return PLCTAG_ERR_REMOTE_ERR;
@@ -398,7 +399,7 @@ eip_session_p create_session(const char *path)
         return NULL;
     }
 
-    session->resource_count = 1;
+    session->resource_count = 1; /* MAGIC */
     session->status = PLCTAG_STATUS_PENDING;
     session->sock = NULL;
     session->state = SESSION_STARTING;
@@ -462,6 +463,8 @@ int parse_path(const char *full_path, char **host, int *port, char **local_path)
     }
     p = q;
 
+    pdebug(DEBUG_DETAIL,"Got host string %s", *host);
+
     /* port is optional */
     if(*p && *p == ':') {
         char tmp_char;
@@ -505,6 +508,8 @@ int parse_path(const char *full_path, char **host, int *port, char **local_path)
         mem_free(tmp_path);
         return PLCTAG_ERR_BAD_PARAM;
     }
+
+    pdebug(DEBUG_DETAIL,"Matched local path %s", *local_path);
 
     mem_free(tmp_path);
 
@@ -618,7 +623,6 @@ char *match_local_path(char *p)
 
     return q;
 }
-
 
 
 char *match_number(char *p)
