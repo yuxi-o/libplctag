@@ -233,7 +233,7 @@ int get_size(impl_tag_p impl_tag)
     }
 
     if(tag->data) {
-        size = bytebuf_size(tag->data);
+        size = bytebuf_get_size(tag->data);
     }
 
     return size;
