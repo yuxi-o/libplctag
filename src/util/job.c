@@ -32,7 +32,7 @@
 #define MIN_BLOCKING_JOBS (20)
 #define MIN_BLOCKING_THREADS (8)
 
-typedef enum { WAITING, RUNNING, DEAD } job_status;
+typedef enum { READY_TO_RUN, RUNNING, DEAD } job_status;
 
 struct job_t {
     int is_blocking;
@@ -77,7 +77,7 @@ job_p job_create(job_function func, int is_blocking, int arg_count, ...)
     }
 
     entry->is_blocking = is_blocking;
-    entry->status = RUNNING;
+    entry->status = READY_TO_RUN;
     entry->func = func;
     entry->arg_count = arg_count;
     entry->args = (void **)(entry+1); /* point past the job struct. */
@@ -147,7 +147,7 @@ THREAD_FUNC(job_runner)
                         i--; /* the list changed size.*/
 
                         continue;
-                    } else if(job->status == WAITING) {
+                    } else if(job->status == READY_TO_RUN) {
                         /* yes, so mark it as running to prevent other threads from changing it. */
                         job->status = RUNNING;
                         index = i;
@@ -167,7 +167,7 @@ THREAD_FUNC(job_runner)
                     job->status = DEAD;
                 } else {
                     /* mark it as ready to run. */
-                    job->status = WAITING;
+                    job->status = READY_TO_RUN;
                 }
 
                 /* release the reference. */
