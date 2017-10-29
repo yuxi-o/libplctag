@@ -355,6 +355,8 @@ int register_session(eip_session_p session)
     session->session_handle = session_handle;
     session->status = PLCTAG_STATUS_OK;
 
+    pdebug(DEBUG_DETAIL,"Using session handle %x.", session_handle);
+
     pdebug(DEBUG_INFO, "Done.");
 
     return PLCTAG_STATUS_OK;
@@ -378,6 +380,12 @@ eip_session_p create_session(const char *path)
         return NULL;
     }
 
+    session->resource_count = 1; /* MAGIC */
+    session->status = PLCTAG_STATUS_PENDING;
+    session->sock = NULL;
+    session->state = SESSION_STARTING;
+    session->port = AB_EIP_DEFAULT_PORT;
+
     rc = parse_path(path, &session->host, &session->port, &session->path);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR,"Unable to parse path!");
@@ -398,11 +406,6 @@ eip_session_p create_session(const char *path)
         rc_dec(session);
         return NULL;
     }
-
-    session->resource_count = 1; /* MAGIC */
-    session->status = PLCTAG_STATUS_PENDING;
-    session->sock = NULL;
-    session->state = SESSION_STARTING;
 
     return session;
 }
@@ -522,6 +525,7 @@ char *match_host(char *p)
 {
     /* try IP address. */
     pdebug(DEBUG_DETAIL,"Starting.");
+
     char *q = match_ip(p);
 
     if(!q) {
@@ -543,10 +547,25 @@ char *match_ip(char *p)
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
     }
+
     if(*q != '.') {
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
     }
+    p = ++q;
+
+    q = match_number(p);
+    if(!q) {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+
+    if(*q != '.') {
+        pdebug(DEBUG_DETAIL,"No match.");
+        return NULL;
+    }
+    p = ++q;
+
     q = match_number(p);
     if(!q) {
         pdebug(DEBUG_DETAIL,"No match.");
@@ -556,15 +575,8 @@ char *match_ip(char *p)
         pdebug(DEBUG_DETAIL,"No match.");
         return NULL;
     }
-    q = match_number(p);
-    if(!q) {
-        pdebug(DEBUG_DETAIL,"No match.");
-        return NULL;
-    }
-    if(*q != '.') {
-        pdebug(DEBUG_DETAIL,"No match.");
-        return NULL;
-    }
+    p = ++q;
+
     q = match_number(p);
     if(!q) {
         pdebug(DEBUG_DETAIL,"No match.");
@@ -614,7 +626,7 @@ char *match_local_path(char *p)
         return NULL;
     }
 
-    if(!isdigit(*q) && *q != ',') {
+    if(*q && !isdigit(*q) && *q != ',') {
         pdebug(DEBUG_WARN,"A local path must be a comma delimited list of numbers!");
         return NULL;
     }
@@ -631,7 +643,7 @@ char *match_number(char *p)
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    while(*q && isdigit(q)) {
+    while(*q && isdigit(*q)) {
         q++;
     }
 
