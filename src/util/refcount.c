@@ -214,7 +214,7 @@ void *rc_inc_impl(const char *func, int line_num, void *data)
     refcount_p rc = NULL;
     void *  result = NULL;
 
-    pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
+    pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
 
     if(!data) {
         pdebug(DEBUG_WARN,"Invalid pointer passed!");
@@ -242,9 +242,9 @@ void *rc_inc_impl(const char *func, int line_num, void *data)
     lock_release(&rc->lock);
 
     if(!result) {
-        pdebug(DEBUG_DETAIL,"Invalid ref!  Unable to take strong reference.");
+        pdebug(DEBUG_WARN,"Invalid ref from call at %s line %d!  Unable to take strong reference.", func, line_num);
     } else {
-        pdebug(DEBUG_DETAIL,"Ref count is %d.", count);
+        pdebug(DEBUG_SPEW,"Ref count is %d.", count);
     }
 
     /* return the result pointer. */
@@ -270,7 +270,7 @@ void *rc_dec_impl(const char *func, int line_num, void *data)
     int invalid = 0;
     refcount_p rc = NULL;
 
-    pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
+    pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
 
     if(!data) {
         pdebug(DEBUG_WARN,"Null reference passed!");
@@ -296,7 +296,7 @@ void *rc_dec_impl(const char *func, int line_num, void *data)
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
 
-    pdebug(DEBUG_DETAIL,"Ref count is %d.", count);
+    pdebug(DEBUG_SPEW,"Ref count is %d.", count);
 
     /* clean up only if count is zero. */
     if(rc && !invalid && count <= 0) {
@@ -304,8 +304,6 @@ void *rc_dec_impl(const char *func, int line_num, void *data)
 
         refcount_cleanup(rc);
     }
-
-    pdebug(DEBUG_INFO,"Done.");
 
     return NULL;
 }
