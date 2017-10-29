@@ -45,6 +45,8 @@ bytebuf_p bytebuf_create(int initial_cap)
 {
     bytebuf_p buf = NULL;
 
+    pdebug(DEBUG_INFO,"Starting.");
+
     if(initial_cap < 0) {
         pdebug(DEBUG_WARN,"Initial capacity less than zero!");
         return buf;
@@ -69,6 +71,8 @@ bytebuf_p bytebuf_create(int initial_cap)
         return NULL;
     }
 
+    pdebug(DEBUG_INFO,"Done.");
+
     return buf;
 }
 
@@ -77,7 +81,7 @@ int bytebuf_set_cursor(bytebuf_p buf, int cursor)
 {
     int new_cap = cursor;
 
-    pdebug(DEBUG_DETAIL,"Starting to move cursor to %d", cursor);
+    pdebug(DEBUG_SPEW,"Starting to move cursor to %d", cursor);
 
     if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
@@ -95,22 +99,27 @@ int bytebuf_set_cursor(bytebuf_p buf, int cursor)
     if(cursor < 0) {
         int amount = -cursor;
 
-        pdebug(DEBUG_DETAIL,"Cursor was negative, prepending %d bytes of space.", amount);
+        pdebug(DEBUG_SPEW,"Cursor was negative, prepending %d bytes of space.", amount);
 
         mem_move(&buf->bytes[amount], &buf->bytes[0], buf->size);
         mem_set(&buf->bytes[0], 0, amount);
         buf->size += amount;
         cursor = 0;
-    }
-
-    if(cursor >= buf->size) {
-        buf->size = cursor + 1;
+    } else {
+        if(cursor >= buf->size) {
+            buf->size = cursor;
+            pdebug(DEBUG_SPEW,"Increasing size (%d) based on new cursor (%d).", buf->size, cursor);
+        }
     }
 
     buf->cursor = cursor;
 
+    pdebug(DEBUG_SPEW,"Done.");
+
     return PLCTAG_STATUS_OK;
 }
+
+
 
 int bytebuf_get_cursor(bytebuf_p buf)
 {
@@ -123,63 +132,10 @@ int bytebuf_get_cursor(bytebuf_p buf)
 }
 
 
-int bytebuf_put(bytebuf_p buf, uint8_t data)
-{
-    pdebug(DEBUG_DETAIL,"Starting.");
-
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Called with null or invalid reference!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
-
-    /* make sure we have capacity to push the new byte. */
-    if(!ensure_capacity(buf, buf->cursor + 1) == PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_ERROR, "Unable to expand byte buffer capacity!");
-        return PLCTAG_ERR_NO_MEM;
-    }
-
-    buf->bytes[buf->cursor] = data;
-
-    buf->cursor++;
-
-    if(buf->cursor >= buf->size) {
-        buf->size = buf->cursor+1;
-    }
-
-    pdebug(DEBUG_DETAIL,"Done.");
-
-    return PLCTAG_STATUS_OK;
-}
-
-
-int bytebuf_get(bytebuf_p buf, uint8_t *data)
-{
-    pdebug(DEBUG_DETAIL,"Starting.");
-
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Called with null or invalid reference!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
-
-    /* make sure we have data for the read. */
-    if(buf->cursor < 0 || buf->cursor >= buf->size) {
-        pdebug(DEBUG_ERROR, "Cursor out of bounds!");
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
-
-    *data = buf->bytes[buf->cursor];
-
-    buf->cursor++;
-
-    pdebug(DEBUG_DETAIL,"Done.");
-
-    return PLCTAG_STATUS_OK;
-}
-
 
 int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val)
 {
-    pdebug(DEBUG_DETAIL,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
@@ -213,7 +169,7 @@ int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val)
 
     buf->cursor = buf->cursor + size;
 
-    pdebug(DEBUG_DETAIL,"Done.");
+    pdebug(DEBUG_SPEW,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
@@ -221,17 +177,17 @@ int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val)
 
 int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val)
 {
-    pdebug(DEBUG_DETAIL,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    /* make sure we have data for the read. */
-    if(buf->cursor < 0 || (buf->cursor + size) > buf->size) {
-        pdebug(DEBUG_ERROR, "Cursor out of bounds!");
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
+    /* make sure we have the capacity to set this int */
+    if(!ensure_capacity(buf, buf->cursor + size) == PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_ERROR, "Unable to expand byte buffer capacity!");
+        return PLCTAG_ERR_NO_MEM;
     }
 
     /* Start with the least significant byte. */
@@ -245,38 +201,74 @@ int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val)
 
     buf->cursor = buf->cursor + size;
 
-    pdebug(DEBUG_DETAIL,"Done.");
+    if(buf->cursor > buf->size) {
+        buf->size = buf->cursor;
+    }
+
+    pdebug(DEBUG_SPEW,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
 
 
 
-int bytebuf_size(bytebuf_p buf)
+int bytebuf_get_size(bytebuf_p buf)
 {
-    pdebug(DEBUG_DETAIL,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    pdebug(DEBUG_DETAIL, "Done.");
+    pdebug(DEBUG_SPEW,"Done size = %d", buf->size);
 
     return buf->size;
 }
 
 
+//~ int bytebuf_set_size(bytebuf_p buf, int size)
+//~ {
+    //~ int rc = PLCTAG_STATUS_OK;
+    //~ int old_cursor;
+
+    //~ pdebug(DEBUG_DETAIL,"Starting.");
+
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Called with null or invalid reference!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
+
+    //~ /*
+     //~ * get the cursor to be able to restore it then set the cursor to
+     //~ * get capacity.
+     //~ */
+
+    //~ old_cursor = bytebuf_get_cursor(buf);
+    //~ rc = bytebuf_set_cursor(buf, size);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ pdebug(DEBUG_WARN,"Unable to set buffer size!");
+        //~ return rc;
+    //~ }
+
+    //~ rc = bytebuf_set_cursor(buf, old_cursor);
+
+    //~ pdebug(DEBUG_DETAIL, "Done.");
+
+    //~ return rc;
+//~ }
+
+
 uint8_t *bytebuf_get_buffer(bytebuf_p buf)
 {
-    pdebug(DEBUG_DETAIL,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
         return NULL;
     }
 
-    pdebug(DEBUG_DETAIL, "Done.");
+    pdebug(DEBUG_SPEW, "Done.");
 
     return &buf->bytes[buf->cursor];
 }
@@ -285,7 +277,7 @@ uint8_t *bytebuf_get_buffer(bytebuf_p buf)
 
 int bytebuf_reset(bytebuf_p buf)
 {
-    pdebug(DEBUG_DETAIL,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     if(!buf) {
         pdebug(DEBUG_WARN,"Called with null or invalid reference!");
@@ -297,7 +289,7 @@ int bytebuf_reset(bytebuf_p buf)
 
     mem_set(buf->bytes, 0, buf->capacity);
 
-    pdebug(DEBUG_DETAIL, "Done.");
+    pdebug(DEBUG_SPEW, "Done.");
 
     return PLCTAG_STATUS_OK;
 }
@@ -342,19 +334,19 @@ int ensure_capacity(bytebuf_p buf, int cap)
     uint8_t *bytes = NULL;
     int new_cap = 0;
 
-    pdebug(DEBUG_DETAIL,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     /* round cap up to CHUNK_SIZE */
     new_cap = NEAREST_CHUNK(cap);
 
-    pdebug(DEBUG_DETAIL,"New capacity request is %d from actual %d",new_cap, cap);
+    pdebug(DEBUG_SPEW,"New capacity request is %d from actual %d",new_cap, cap);
 
     if(new_cap <= buf->capacity) {
-        pdebug(DEBUG_DETAIL,"No need to allocate new buffer. Current buffer has capacity %d", buf->capacity);
+        pdebug(DEBUG_SPEW,"No need to allocate new buffer. Current buffer has capacity %d", buf->capacity);
         return PLCTAG_STATUS_OK;
     }
 
-    pdebug(DEBUG_DETAIL,"Allocating more buffer space.");
+    pdebug(DEBUG_SPEW,"Allocating more buffer space.");
 
     /* need to allocate more memory */
     bytes = mem_alloc(new_cap);
@@ -369,7 +361,7 @@ int ensure_capacity(bytebuf_p buf, int cap)
 
     buf->bytes = bytes;
 
-    pdebug(DEBUG_DETAIL,"Done.");
+    pdebug(DEBUG_SPEW,"Done.");
 
     return PLCTAG_STATUS_OK;
 }

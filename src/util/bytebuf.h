@@ -31,7 +31,7 @@ extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
 extern int bytebuf_get_cursor(bytebuf_p buf);
 extern int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val);
 extern int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val);
-extern int bytebuf_size(bytebuf_p buf);
+extern int bytebuf_get_size(bytebuf_p buf);
 extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
 extern int bytebuf_reset(bytebuf_p buf);
 extern int bytebuf_destroy(bytebuf_p buf);
