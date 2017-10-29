@@ -170,13 +170,15 @@ extern void pdebug_dump_bytes_impl(const char *func, const char *filename, int l
     /* determine the number of rows we will need to print. */
     max_row = (count  + (COLUMNS - 1))/COLUMNS;
 
+    //~ pdebug(DEBUG_DETAIL,"printing %d bytes in %d rows.", count, max_row);
+
     for(row = 0; row < max_row; row++) {
         offset = (row * COLUMNS);
 
         /* print the prefix and address */
         row_offset = snprintf(&row_buf[0], sizeof(row_buf),"%s %s %s (%s:%d) %05d", prefix, debug_level_name[debug_level], func, filename, line_num, offset);
 
-        for(column = 0; column < COLUMNS && offset < count && row_offset < (int)sizeof(row_buf); column++) {
+        for(column = 0; column < COLUMNS && ((row * COLUMNS) + column) < count && row_offset < (int)sizeof(row_buf); column++) {
             offset = (row * COLUMNS) + column;
             row_offset += snprintf(&row_buf[row_offset], sizeof(row_buf) - row_offset, " %02x", data[offset]);
         }
