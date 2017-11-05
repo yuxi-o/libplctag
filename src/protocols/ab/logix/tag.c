@@ -42,7 +42,7 @@ typedef enum { STARTING, GET_SESSION, WAIT_SESSION, START_RETRY_SESSION, WAIT_RE
 
 
 typedef struct {
-    struct impl_tag_t base_tag;
+    struct plc_t base_tag;
 
     mutex_p mutex;
 
@@ -58,7 +58,7 @@ typedef struct {
     const char *name;
     int element_count;
 
-    eip_session_p session;
+    logix_session_p session;
     int session_retry_count;
     int session_current_retry;
     int64_t session_next_retry_time_ms;
@@ -97,16 +97,16 @@ typedef struct {
 We need to implement the following functions:
 
 struct impl_vtable {
-    int (*abort)(impl_tag_p tag);
-    int (*get_size)(impl_tag_p tag);
-    int (*get_status)(impl_tag_p tag);
-    int (*start_read)(impl_tag_p tag);
-    int (*start_write)(impl_tag_p tag);
+    int (*abort)(plc_p tag);
+    int (*get_size)(plc_p tag);
+    int (*get_status)(plc_p tag);
+    int (*start_read)(plc_p tag);
+    int (*start_write)(plc_p tag);
 
-    int (*get_int)(impl_tag_p tag, int offset, int size, int64_t *val);
-    int (*set_int)(impl_tag_p tag, int offset, int size, int64_t val);
-    int (*get_double)(impl_tag_p tag, int offset, int size, double *val);
-    int (*set_double)(impl_tag_p tag, int offset, int size, double val);
+    int (*get_int)(plc_p tag, int offset, int size, int64_t *val);
+    int (*set_int)(plc_p tag, int offset, int size, int64_t val);
+    int (*get_double)(plc_p tag, int offset, int size, double *val);
+    int (*set_double)(plc_p tag, int offset, int size, double val);
 };
 
 */
@@ -125,15 +125,15 @@ static void logix_tag_destroy(void *tag_arg, int arg_count, void **args);
 
 
 /* tag vtable routines */
-static int abort_operation(impl_tag_p impl_tag);
-static int get_size(impl_tag_p impl_tag);
-static int get_status(impl_tag_p impl_tag);
-static int start_read(impl_tag_p impl_tag);
-static int start_write(impl_tag_p impl_tag);
-static int get_int(impl_tag_p impl_tag, int offset, int size, int64_t *val);
-static int set_int(impl_tag_p impl_tag, int offset, int size, int64_t val);
-static int get_double(impl_tag_p impl_tag, int offset, int size, double *val);
-static int set_double(impl_tag_p impl_tag, int offset, int size, double val);
+static int abort_operation(plc_p impl_plc);
+static int get_size(plc_p impl_plc);
+static int get_status(plc_p impl_plc);
+static int start_read(plc_p impl_plc);
+static int start_write(plc_p impl_plc);
+static int get_int(plc_p impl_plc, int offset, int size, int64_t *val);
+static int set_int(plc_p impl_plc, int offset, int size, int64_t val);
+static int get_double(plc_p impl_plc, int offset, int size, double *val);
+static int set_double(plc_p impl_plc, int offset, int size, double val);
 
 
 /* set up the vtable for this kind of tag. */
@@ -143,7 +143,7 @@ static struct impl_vtable logix_vtable = { abort_operation, get_size, get_status
 
 
 
-impl_tag_p logix_tag_create(attr attribs)
+plc_p logix_tag_create(attr attribs)
 {
     logix_tag_p tag = NULL;
     int rc = PLCTAG_STATUS_OK;
@@ -154,7 +154,7 @@ impl_tag_p logix_tag_create(attr attribs)
     pdebug(DEBUG_INFO,"Starting.");
 
     /* build the new tag. */
-    tag = rc_alloc(sizeof(logix_tag_t), logix_tag_destroy, 0);
+    tag = rc_alloc(sizeof(logix_tag_t), logix_tag_destroy);
     if(!tag) {
         pdebug(DEBUG_ERROR,"Unable to allocate memory for new tag!");
         return NULL;
@@ -195,7 +195,7 @@ impl_tag_p logix_tag_create(attr attribs)
 
     pdebug(DEBUG_INFO,"Done.");
 
-    return (impl_tag_p)tag;
+    return (plc_p)tag;
 }
 
 
@@ -206,9 +206,9 @@ impl_tag_p logix_tag_create(attr attribs)
  ******************** Tag Implementation Functions *********************
  **********************************************************************/
 
-int abort_operation(impl_tag_p impl_tag)
+int abort_operation(plc_p impl_plc)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Called with null pointer!");
@@ -222,9 +222,9 @@ int abort_operation(impl_tag_p impl_tag)
 
 
 
-int get_size(impl_tag_p impl_tag)
+int get_size(plc_p impl_plc)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
     int size = 0;
 
     if(!tag) {
@@ -240,9 +240,9 @@ int get_size(impl_tag_p impl_tag)
 }
 
 
-int get_status(impl_tag_p impl_tag)
+int get_status(plc_p impl_plc)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Called with null pointer!");
@@ -254,9 +254,9 @@ int get_status(impl_tag_p impl_tag)
 
 
 
-int start_read(impl_tag_p impl_tag)
+int start_read(plc_p impl_plc)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Called with null pointer!");
@@ -273,9 +273,9 @@ int start_read(impl_tag_p impl_tag)
 
 
 
-int start_write(impl_tag_p impl_tag)
+int start_write(plc_p impl_plc)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Called with null pointer!");
@@ -293,9 +293,9 @@ int start_write(impl_tag_p impl_tag)
 
 
 
-int get_int(impl_tag_p impl_tag, int offset, int size, int64_t *val)
+int get_int(plc_p impl_plc, int offset, int size, int64_t *val)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
     int rc = PLCTAG_STATUS_OK;
 
     if(!tag) {
@@ -303,38 +303,41 @@ int get_int(impl_tag_p impl_tag, int offset, int size, int64_t *val)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    if(offset < 0 || ((offset + size) > get_size(impl_tag))) {
-        pdebug(DEBUG_WARN,"Offset out of bounds!");
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
-
-    rc = bytebuf_set_cursor(tag->data, offset);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
-        return rc;
-    }
-
-    /* handle supported sizes */
-    switch(size) {
-        case 1:
-            rc = bytebuf_get_int(tag->data, size, byte_order_8, val);
+    critical_block(tag->mutex) {
+        if(offset < 0 || ((offset + size) > get_size(impl_plc))) {
+            pdebug(DEBUG_WARN,"Offset out of bounds!");
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
             break;
+        }
 
-        case 2:
-            rc = bytebuf_get_int(tag->data, size, byte_order_16, val);
+        rc = bytebuf_set_cursor(tag->data, offset);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
             break;
+        }
 
-        case 4:
-            rc = bytebuf_get_int(tag->data, size, byte_order_32, val);
-            break;
+        /* handle supported sizes */
+        switch(size) {
+            case 1:
+                rc = bytebuf_get_int(tag->data, size, byte_order_8, val);
+                break;
 
-        case 8:
-            rc = bytebuf_get_int(tag->data, size, byte_order_64, val);
-            break;
+            case 2:
+                rc = bytebuf_get_int(tag->data, size, byte_order_16, val);
+                break;
 
-        default:
-            rc = PLCTAG_ERR_UNSUPPORTED;
-            break;
+            case 4:
+                rc = bytebuf_get_int(tag->data, size, byte_order_32, val);
+                break;
+
+            case 8:
+                rc = bytebuf_get_int(tag->data, size, byte_order_64, val);
+                break;
+
+            default:
+                rc = PLCTAG_ERR_UNSUPPORTED;
+                break;
+        }
     }
 
     return rc;
@@ -342,9 +345,9 @@ int get_int(impl_tag_p impl_tag, int offset, int size, int64_t *val)
 
 
 
-int set_int(impl_tag_p impl_tag, int offset, int size, int64_t val)
+int set_int(plc_p impl_plc, int offset, int size, int64_t val)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
     int rc = PLCTAG_STATUS_OK;
 
     if(!tag) {
@@ -352,38 +355,41 @@ int set_int(impl_tag_p impl_tag, int offset, int size, int64_t val)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    if(offset < 0 || ((offset + size) > get_size(impl_tag))) {
-        pdebug(DEBUG_WARN,"Offset out of bounds!");
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
-
-    rc = bytebuf_set_cursor(tag->data, offset);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
-        return rc;
-    }
-
-    /* handle supported sizes */
-    switch(size) {
-        case 1:
-            rc = bytebuf_set_int(tag->data, size, byte_order_8, val);
+    critical_block(tag->mutex) {
+        if(offset < 0 || ((offset + size) > get_size(impl_plc))) {
+            pdebug(DEBUG_WARN,"Offset out of bounds!");
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
             break;
+        }
 
-        case 2:
-            rc = bytebuf_set_int(tag->data, size, byte_order_16, val);
+        rc = bytebuf_set_cursor(tag->data, offset);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
             break;
+        }
 
-        case 4:
-            rc = bytebuf_set_int(tag->data, size, byte_order_32, val);
-            break;
+        /* handle supported sizes */
+        switch(size) {
+            case 1:
+                rc = bytebuf_set_int(tag->data, size, byte_order_8, val);
+                break;
 
-        case 8:
-            rc = bytebuf_set_int(tag->data, size, byte_order_64, val);
-            break;
+            case 2:
+                rc = bytebuf_set_int(tag->data, size, byte_order_16, val);
+                break;
 
-        default:
-            rc = PLCTAG_ERR_UNSUPPORTED;
-            break;
+            case 4:
+                rc = bytebuf_set_int(tag->data, size, byte_order_32, val);
+                break;
+
+            case 8:
+                rc = bytebuf_set_int(tag->data, size, byte_order_64, val);
+                break;
+
+            default:
+                rc = PLCTAG_ERR_UNSUPPORTED;
+                break;
+        }
     }
 
     return rc;
@@ -391,9 +397,9 @@ int set_int(impl_tag_p impl_tag, int offset, int size, int64_t val)
 
 
 
-int get_double(impl_tag_p impl_tag, int offset, int size, double *val)
+int get_double(plc_p impl_plc, int offset, int size, double *val)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
     int rc = PLCTAG_STATUS_OK;
 
     if(!tag) {
@@ -401,63 +407,66 @@ int get_double(impl_tag_p impl_tag, int offset, int size, double *val)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    if(offset < 0 || ((offset + size) > get_size(impl_tag))) {
-        pdebug(DEBUG_WARN,"Offset out of bounds!");
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
+    critical_block(tag->mutex) {
+        if(offset < 0 || ((offset + size) > get_size(impl_plc))) {
+            pdebug(DEBUG_WARN,"Offset out of bounds!");
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+            break;
+        }
 
-    rc = bytebuf_set_cursor(tag->data, offset);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
-        return rc;
-    }
+        rc = bytebuf_set_cursor(tag->data, offset);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
+            break;
+        }
 
-    /* handle supported sizes */
-    switch(size) {
-        case 4: {
-                int64_t tmp_long;
-                int32_t tmp_int;
+        /* handle supported sizes */
+        switch(size) {
+            case 4: {
+                    int64_t tmp_long;
+                    int32_t tmp_int;
 
-                rc = bytebuf_get_int(tag->data, size, byte_order_32, &tmp_long);
+                    rc = bytebuf_get_int(tag->data, size, byte_order_32, &tmp_long);
 
-                if(rc == PLCTAG_STATUS_OK) {
-                    float tmp_float;
+                    if(rc == PLCTAG_STATUS_OK) {
+                        float tmp_float;
 
-                    tmp_int = (int32_t)tmp_long;
+                        tmp_int = (int32_t)tmp_long;
 
-                    mem_copy(&tmp_float, &tmp_int, sizeof(tmp_float) < sizeof(tmp_int) ? sizeof(tmp_float) : sizeof(tmp_int));
+                        mem_copy(&tmp_float, &tmp_int, sizeof(tmp_float) < sizeof(tmp_int) ? sizeof(tmp_float) : sizeof(tmp_int));
 
-                    *val = (double)tmp_float;
+                        *val = (double)tmp_float;
+                    }
                 }
-            }
-            break;
+                break;
 
-        case 8: {
-                int64_t tmp_int;
+            case 8: {
+                    int64_t tmp_int;
 
-                rc = bytebuf_get_int(tag->data, size, byte_order_64, &tmp_int);
+                    rc = bytebuf_get_int(tag->data, size, byte_order_64, &tmp_int);
 
-                if(rc == PLCTAG_STATUS_OK) {
-                    double tmp_float;
+                    if(rc == PLCTAG_STATUS_OK) {
+                        double tmp_float;
 
-                    mem_copy(&tmp_float, &tmp_int, sizeof(tmp_float) < sizeof(tmp_int) ? sizeof(tmp_float) : sizeof(tmp_int));
+                        mem_copy(&tmp_float, &tmp_int, sizeof(tmp_float) < sizeof(tmp_int) ? sizeof(tmp_float) : sizeof(tmp_int));
 
-                    *val = (double)tmp_float;
+                        *val = (double)tmp_float;
+                    }
                 }
-            }
-            break;
+                break;
 
-        default:
-            rc = PLCTAG_ERR_UNSUPPORTED;
-            break;
+            default:
+                rc = PLCTAG_ERR_UNSUPPORTED;
+                break;
+        }
     }
 
     return rc;
 }
 
-int set_double(impl_tag_p impl_tag, int offset, int size, double val)
+int set_double(plc_p impl_plc, int offset, int size, double val)
 {
-    logix_tag_p tag = (logix_tag_p)impl_tag;
+    logix_tag_p tag = (logix_tag_p)impl_plc;
     int rc = PLCTAG_STATUS_OK;
 
     if(!tag) {
@@ -465,44 +474,47 @@ int set_double(impl_tag_p impl_tag, int offset, int size, double val)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    if(offset < 0 || ((offset + size) > get_size(impl_tag))) {
-        pdebug(DEBUG_WARN,"Offset out of bounds!");
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
-
-    rc = bytebuf_set_cursor(tag->data, offset);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
-        return rc;
-    }
-
-    /* handle supported sizes */
-    switch(size) {
-        case 4: {
-                int32_t tmp_int = 0;
-                float tmp_float = (float)val; /* FIXME - this should cause a warning. */
-                int64_t tmp_long = 0;
-
-                mem_copy(&tmp_int, &tmp_float, sizeof(tmp_float) < sizeof(tmp_int) ? sizeof(tmp_float) : sizeof(tmp_int));
-
-                tmp_long = (int64_t)tmp_int;
-
-                rc = bytebuf_set_int(tag->data, size, byte_order_32, tmp_long);
-            }
+    critical_block(tag->mutex) {
+        if(offset < 0 || ((offset + size) > get_size(impl_plc))) {
+            pdebug(DEBUG_WARN,"Offset out of bounds!");
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
             break;
+        }
 
-        case 8: {
-                int64_t tmp_long = 0;
-
-                mem_copy(&tmp_long, &val, sizeof(val) < sizeof(tmp_long) ? sizeof(val) : sizeof(tmp_long));
-
-                rc = bytebuf_set_int(tag->data, size, byte_order_64, tmp_long);
-            }
+        rc = bytebuf_set_cursor(tag->data, offset);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error setting cursor in byte buffer!");
             break;
+        }
 
-        default:
-            rc = PLCTAG_ERR_UNSUPPORTED;
-            break;
+        /* handle supported sizes */
+        switch(size) {
+            case 4: {
+                    int32_t tmp_int = 0;
+                    float tmp_float = (float)val; /* FIXME - this should cause a warning. */
+                    int64_t tmp_long = 0;
+
+                    mem_copy(&tmp_int, &tmp_float, sizeof(tmp_float) < sizeof(tmp_int) ? sizeof(tmp_float) : sizeof(tmp_int));
+
+                    tmp_long = (int64_t)tmp_int;
+
+                    rc = bytebuf_set_int(tag->data, size, byte_order_32, tmp_long);
+                }
+                break;
+
+            case 8: {
+                    int64_t tmp_long = 0;
+
+                    mem_copy(&tmp_long, &val, sizeof(val) < sizeof(tmp_long) ? sizeof(val) : sizeof(tmp_long));
+
+                    rc = bytebuf_set_int(tag->data, size, byte_order_64, tmp_long);
+                }
+                break;
+
+            default:
+                rc = PLCTAG_ERR_UNSUPPORTED;
+                break;
+        }
     }
 
     return rc;
@@ -550,13 +562,13 @@ job_exit_type tag_monitor(int arg_count, void **args)
                 break;
 
             case GET_SESSION:
-                tag->session = get_session(tag->path);
+                tag->session = logix_get_session(tag->path);
 
                 if(!tag->session) {
                     /* this is fatal */
                     pdebug(DEBUG_WARN,"Unable to get session!");
-                    tag->state = TERMINATING;
                     tag->status = PLCTAG_ERR_OPEN;
+                    tag->state = TERMINATING;
                 } else {
                     /* got a session, now wait for it to be ready.*/
                     pdebug(DEBUG_DETAIL,"Got session, waiting for it to be ready.");
@@ -567,7 +579,7 @@ job_exit_type tag_monitor(int arg_count, void **args)
 
             case WAIT_SESSION:
                 {
-                    int session_status = get_session_status(tag->session);
+                    int session_status = logix_get_session_status(tag->session);
 
                     if(session_status == PLCTAG_STATUS_OK) {
                         pdebug(DEBUG_DETAIL,"Session is ready.  Going to RUNNING state.");
@@ -607,7 +619,7 @@ job_exit_type tag_monitor(int arg_count, void **args)
 
             case RUNNING:
                 {
-                    int session_status = get_session_status(tag->session);
+                    int session_status = logix_get_session_status(tag->session);
 
                     if(session_status != PLCTAG_STATUS_OK) {
                         pdebug(DEBUG_INFO,"PLC in bad state, retrying.");
@@ -620,43 +632,119 @@ job_exit_type tag_monitor(int arg_count, void **args)
 
                         /* check for requests. */
                         if(tag->read_requested) {
-                            pdebug(DEBUG_DETAIL,"Starting read worker.");
-                            //~ tag->worker = pt_create(read_worker,1, tag);
-                            //~ if(!tag->worker) {
-                                //~ pdebug(DEBUG_WARN,"Unable to create read worker PT!");
-                                //~ tag->status = PLCTAG_ERR_NO_MEM;
-                                //~ tag->state = TERMINATING;
-                            //~ } else {
-                                //~ /* all OK */
-                                //~ tag->status = PLCTAG_STATUS_PENDING;
-                                //~ tag->state = BUSY;
-                            //~ }
+                            pdebug(DEBUG_DETAIL,"Starting read request.");
+
+                            tag->read_request_in_flight = 1;
+
+                            rc = tag_start_read(tag);
+                            if(rc != PLCTAG_STATUS_OK) {
+                                pdebug(DEBUG_WARN,"Unable to start read!");
+                                tag->state = ERROR;
+                                tag->status = rc;
+                            } else {
+                                tag->state = BUSY;
+                                tag->status = PLCTAG_STATUS_PENDING;
+                            }
                         } else if(tag->write_requested) {
-                            pdebug(DEBUG_DETAIL,"Starting write worker.");
-                            //~ tag->worker = pt_create(write_worker,1, tag);
-                            //~ if(!tag->worker) {
-                                //~ pdebug(DEBUG_WARN,"Unable to create write worker PT!");
-                                //~ tag->status = PLCTAG_ERR_NO_MEM;
-                                //~ tag->status = TERMINATING
-                            //~ } else {
-                                //~ /* all OK */
-                                //~ tag->status = PLCTAG_STATUS_PENDING;
-                                //~ tag->state = BUSY;
-                            //~ }
+                            pdebug(DEBUG_DETAIL,"Starting write request.");
+
+                            tag->write_request_in_flight = 1;
+
+                            rc = tag_start_write(tag);
+                            if(rc != PLCTAG_STATUS_OK) {
+                                pdebug(DEBUG_WARN,"Unable to start write!");
+                                tag->state = ERROR;
+                                tag->status = rc;
+                            } else {
+                                tag->state = BUSY;
+                                tag->status = PLCTAG_STATUS_PENDING;
+                            }
+                        } else if(tag->abort_requested) {
+                            pdebug(DEBUG_INFO,"Aborting any request in flight.");
+                            if(tag->request) {
+                                tag->request->abort_requested = 1;
+                                tag->request = rc_dec(tag->request);
+
+                                /* FIXME - should this be more complicated and check the current status? */
+                                if(tag->status == PLCTAG_STATUS_PENDING)
+                                tag->status = PLCTAG_STATUS_OK;
+                            }
                         }
                     }
                 }
                 break;
 
             case BUSY:
-            /* FIXME - this logic is incorrect. */
-                if(!tag->monitor) {
+                /* if anything is in flight, check the results. */
+                if(tag->request) {
+                    if(tag->abort_requested) {
+                        tag->request->abort_requested = 1;
+
+                        tag->read_requested = 0;
+                        tag->write_requested = 0;
+
+                        if(tag->state == PLCTAG_STATUS_PENDING) {
+                            tag->state = PLCTAG_STATUS_OK;
+                        }
+
+                        tag->request = rc_dec(tag->request);
+                    } else if(tag->request->status == PLCTAG_STATUS_OK) {
+                        if(tag->read_requested && tag->request->read_requested) {
+                            bytebuf_p old_buf = tag->data;
+
+                            pdebug(DEBUG_DETAIL,"Read succeeded.");
+
+                            /* mutex is already locked, so swap the byte buffers. */
+                            tag->data = tag->request->data;
+                            tag->request->data = old_buf;
+
+                            tag->read_requested = 0;
+                            tag->request = rc_dec(tag->request);
+
+                            tag->status = PLCTAG_STATUS_OK;
+                        } else if(tag->write_requested && tag->request->write_requested) {
+                            pdebug(DEBUG_DETAIL, "Write succeeded.");
+
+                            tag->write_requested = 0;
+                            tag->request = rc_dec(tag->request);
+
+                            tag->status = PLCTAG_STATUS_OK;
+                        }
+                    } else if(tag->request->status != PLCTAG_STATUS_PENDING) {
+                        /* catch errors from downstream. */
+                        pdebug(DEBUG_WARN,"Request failed!");
+
+                        tag->status = tag->request->status;
+                        tag->request->abort_requested = 1;
+
+                        tag->request = rc_dec(tag->request);
+                    }
+                }
+
+                if(!tag->request) {
                     pdebug(DEBUG_DETAIL,"Work is done, tag no longer busy.");
-                    tag->state = RUNNING;
+
+                    /* check status */
+                    if(tag->status != PLCTAG_STATUS_OK && tag->status != PLCTAG_STATUS_PENDING) {
+                        /* error!
+                         *
+                         * FIXME - do something smarter here. There are situations where we could
+                         * try another connection later.
+                         */
+                         tag->state = TERMINATING;
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Operation complete.");
+                        tag->state = RUNNING;
+                    }
                 }
                 break;
 
             case TERMINATING:
+                dead = 1;
+                break;
+
+            default:
+                pdebug(DEBUG_ERROR,"Unknown state (%d)!". tag->state);
                 dead = 1;
                 break;
        }
@@ -670,6 +758,47 @@ job_exit_type tag_monitor(int arg_count, void **args)
     }
 
     return JOB_RERUN;
+}
+
+
+
+int tag_start_read(logix_tag_p tag)
+{
+    pdebug(DEBUG_INFO,"Starting");
+
+    tag->request = logix_request_create();
+    if(!tag->request) {
+        pdebug(DEBUG_WARN,"Unable to create new request!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
+    request->read_requested = 1;
+    request->tag = rc_inc(tag);
+
+    pdebug(DEBUG_INFO,"Done, now queuing request.");
+
+    return session_queue_request(tag->session, request);
+}
+
+
+
+
+int tag_start_write(logix_tag_p tag)
+{
+    pdebug(DEBUG_INFO,"Starting");
+
+    tag->request = logix_request_create();
+    if(!tag->request) {
+        pdebug(DEBUG_WARN,"Unable to create new request!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
+    request->write_requested = 1;
+    request->tag = rc_inc(tag);
+
+    pdebug(DEBUG_INFO,"Done, now queuing request.");
+
+    return session_queue_request(tag->session, request);
 }
 
 

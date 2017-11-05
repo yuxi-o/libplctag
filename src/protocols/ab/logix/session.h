@@ -21,9 +21,15 @@
 #ifndef __PROTOCOLS_AB_LOGIX_SESSION_H__
 #define __PROTOCOLS_AB_LOGIX_SESSION_H__ 1
 
-typedef struct eip_session_t *eip_session_p;
 
-extern eip_session_p get_session(const char *path);
-extern int get_session_status(eip_session_p session);
+typedef struct logix_session_t *logix_session_p;
+
+extern logix_session_p logix_get_session(const char *path);
+
+extern int logix_get_session_status(logix_session_p session);
+
+extern int logix_session_read_tag(logix_session_p session, const char *tag_name, bytebuf_p data);
+extern int logix_session_write_tag(logix_session_p session, const char *tag_name, bytebuf_p data);
+extern int logix_session_abort_tag(logix_session_p session, const char *tag_name);
 
 #endif

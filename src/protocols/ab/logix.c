@@ -22,7 +22,7 @@
 #include <ctype.h>
 #include <platform.h>
 #include <lib/libplctag.h>
-#include <ab/logix/session.h>
+#include <ab/logix/plc.h>
 #include <ab/logix/packet.h>
 #include <util/debug.h>
 #include <util/job.h>
@@ -33,36 +33,61 @@
 
 #define SESSION_RESOURCE_PREFIX "AB CIP Session "
 
-typedef enum {SESSION_STARTING, SESSION_OPEN_SESSION, SESSION_RUNNING} session_state;
+typedef enum {SESSION_STARTING, SESSION_OPEN_SESSION, SESSION_RUNNING} plc_state;
 
-struct eip_session_t {
+
+struct logix_plc_t {
+    struct plc_t base;
+
     char *full_path;
     char *host;
     int port;
     char *path;
 
     mutex_p mutex;
-
-    int resource_count;
+    vector_p requests;
 
     sock_p sock;
 
     int status;
-    session_state state;
+    plc_state state;
 
-    uint32_t session_handle;
-    uint64_t session_context;
+    uint32_t plc_handle;
+    uint64_t plc_context;
 
     job_p monitor;
 
     bytebuf_p data;
 };
+typedef struct logix_plc_t *logix_plc_p;
 
 
-static int register_session(eip_session_p session);
-static job_exit_type session_monitor(int arg_count, void **args);
-static eip_session_p create_session(const char *path);
-static void session_destroy(void *session_arg, int arg_count, void **args);
+struct request_t {
+    int abort_requested;
+    int read_requested;
+    int write_requested;
+    int operation_in_flight;
+
+    int status;
+
+    tag_p tag;
+    bytebuf_p data;
+};
+
+typedef struct request_t *request_p;
+
+/* declarations for our v-table functions */
+static int tag_status(plc_p plc, tag_p tag);
+static int tag_abort(plc_p plc, tag_p tag);
+static int tag_read(plc_p plc, tag_p tag);
+static int tag_write(plc_p plc, tag_p tag);
+
+
+
+static int register_plc(logix_plc_p plc);
+static job_exit_type plc_monitor(int arg_count, void **args);
+static logix_plc_p create_plc(const char *path);
+static void plc_destroy(void *plc_arg, int arg_count, void **args);
 
 static int parse_path(const char *full_path, char **host, int *port, char **local_path);
 static char *match_host(char *p);
@@ -72,65 +97,234 @@ static char *match_local_path(char *p);
 static char *match_number(char *p);
 
 
-eip_session_p get_session(const char *path)
+/***********************************************************************
+ *********************** Public Functions ******************************
+ **********************************************************************/
+
+
+plc_p logix_plc_create(attr attribs)
 {
-    char *session_name = resource_make_name(SESSION_RESOURCE_PREFIX, path);
-    eip_session_p session = NULL;
+    char *plc_name = NULL;
+    logix_plc_p plc = NULL;
+    const char *path = attr_get_str(attribs,"path",NULL);
+
+    pdebug(DEBUG_INFO,"Starting");
+
+    if(!path || str_length(path)) {
+        pdebug(DEBUG_WARN,"PLC path is missing or empty!");
+        return NULL;
+    }
+
+    plc_name = resource_make_name(SESSION_RESOURCE_PREFIX, path);
+    if(!plc_name) {
+        pdebug(DEBUG_WARN,"Unable to make PLC name!");
+        return NULL;
+    }
+
+    if(str_length(plc_name) == 0) {
+        pdebug(DEBUG_WARN,"PLC name is null or zero length!");
+        mem_free(plc_name);
+        return NULL;
+    }
 
     pdebug(DEBUG_INFO,"Starting with path %s", path);
 
-    if(!session_name) {
-        pdebug(DEBUG_WARN,"Unable to make session name!");
-        return NULL;
-    }
+    plc = resource_get(plc_name);
 
-    if(str_length(session_name) == 0) {
-        pdebug(DEBUG_WARN,"Session name is null or zero length!");
-        mem_free(session_name);
-        return NULL;
-    }
+    if(!plc) {
+        pdebug(DEBUG_DETAIL,"Might need to create new plc.");
 
-    session = resource_get(session_name);
-
-    if(!session) {
-        pdebug(DEBUG_DETAIL,"Might need to create new session.");
-
-        /* better try to make a session. */
-        session = create_session(path);
-        if(session) {
-            if(resource_put(session_name, session) == PLCTAG_ERR_DUPLICATE) {
+        /* better try to make a plc. */
+        plc = create_plc(path);
+        if(plc) {
+            if(resource_put(plc_name, plc) == PLCTAG_ERR_DUPLICATE) {
                 /* oops hit race condition, need to dump this, there is one already. */
-                pdebug(DEBUG_DETAIL,"Oops! Someone else created session already!");
+                pdebug(DEBUG_DETAIL,"Oops! Someone else created plc already!");
 
-                session = rc_dec(session);
+                plc = rc_dec(plc);
 
-                session = resource_get(session_name);
+                plc = resource_get(plc_name);
             } else {
-                session->monitor = job_create(session_monitor, 0, 1, session);
-                if(!session->monitor) {
-                    pdebug(DEBUG_ERROR,"Unable to create session monitor job!");
-                    session = rc_dec(session);
+                plc->monitor = job_create(plc_monitor, 0, 1, plc);
+                if(!plc->monitor) {
+                    pdebug(DEBUG_ERROR,"Unable to create plc monitor job!");
+                    plc = rc_dec(plc);
                 }
             }
         } else {
             /* create failed! */
-            pdebug(DEBUG_ERROR,"Unable to create new session!");
+            pdebug(DEBUG_ERROR,"Unable to create new plc!");
         }
     }
 
-    if(session_name) {
-        mem_free(session_name);
+    if(plc_name) {
+        mem_free(plc_name);
     }
 
-    return session;
+    if(plc) {
+        /* register the tag in the PLC tag store */
+
+    }
+
+    return (plc_p)plc;
 }
 
 
-int get_session_status(eip_session_p session)
+//~ plc_p logix_tag_create(attr attribs)
+//~ {
+    //~ logix_plc_p plc = NULL;
+    //~ int rc = PLCTAG_STATUS_OK;
+
+    //~ /* FIXME */
+    //~ (void)attribs;
+
+    //~ pdebug(DEBUG_INFO,"Starting.");
+
+    //~ /* build the new plc. */
+    //~ plc = rc_alloc(sizeof(logix_plc_t), logix_plc_destroy);
+    //~ if(!plc) {
+        //~ pdebug(DEBUG_ERROR,"Unable to allocate memory for new plc!");
+        //~ return NULL;
+    //~ }
+
+
+    //~ rc = mutex_create(&plc->mutex);
+    //~ if(!rc == PLCTAG_STATUS_OK) {
+        //~ pdebug(DEBUG_WARN,"Unable to create mutex!");
+        //~ logix_plc_destroy(plc, 0, NULL);
+        //~ return NULL;
+    //~ }
+
+    //~ plc->status = PLCTAG_STATUS_PENDING;
+    //~ plc->state = STARTING;
+
+    //~ plc->path = str_dup(attr_get_str(attribs,"path",NULL));
+    //~ plc->name = str_dup(attr_get_str(attribs,"name",NULL));
+    //~ plc->element_count = attr_get_int(attribs,"elem_count",1);
+
+    //~ /*
+     //~ * the rest of this requires synchronization.  We are creating
+     //~ * independent threads of control from this thread which could
+     //~ * modify plc state.
+     //~ */
+    //~ critical_block(plc->mutex) {
+        //~ /* create a monitor job to monitor the plc during operation. */
+        //~ plc->monitor = job_create(plc_monitor, 0, 1, plc);
+    //~ }
+
+    //~ if(!plc->monitor) {
+        //~ pdebug(DEBUG_ERROR,"Unable to start plc set up job!");
+        //~ logix_plc_destroy(plc, 0, NULL);
+        //~ break;
+    //~ }
+
+    //~ pdebug(DEBUG_INFO,"Done.");
+
+    //~ return (plc_p)plc;
+//~ }
+
+
+
+int tag_status(plc_p plc_arg, tag_p tag)
+{
+    logix_plc_p plc = (logix_plc_p)plc_arg;
+    int status = PLCTAG_STATUS_OK;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
+    }
+
+    critical_block(plc->mutex) {
+        status = plc->status;
+    }
+
+    if(status != PLCTAG_STATUS_OK) {
+        return status;
+    }
+
+    /* look up tag to see if it is in some sort of operation. */
+    status = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        for(int i=0; i < vector_length(plc->requests); i++) {
+            request_p *request = vector_get(plc->requests, i);
+
+            if(request->tag == tag) {
+                status = request->status;
+                break;
+            }
+        }
+    }
+
+    return status;
+}
+
+
+int tag_abort(plc_p plc_arg, tag_p tag)
+{
+    logix_plc_p plc = (logix_plc_p)plc_arg;
+    int status = PLCTAG_STATUS_OK;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
+    }
+
+    critical_block(plc->mutex) {
+        status = plc->status;
+    }
+
+    if(status != PLCTAG_STATUS_OK) {
+        return status;
+    }
+
+    /* look up tag to see if it is in some sort of operation. */
+    status = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        for(int i=0; i < vector_length(plc->requests); i++) {
+            request_p *request = vector_get(plc->requests, i);
+
+            if(request->tag == tag) {
+                request->abort_requested = 1;
+                break;
+            }
+        }
+    }
+
+    return status;
+}
+
+
+int tag_read(plc_p plc, tag_p tag)
+{
+
+}
+
+
+int tag_write(plc_p plc, tag_p tag)
+{
+
+}
+
+
+
+
+/***********************************************************************
+ ************************ Support Routines *****************************
+ **********************************************************************/
+
+
+
+
+
+
+
+
+int logix_get_plc_status(logix_plc_p plc)
 {
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    if(!session) {
+    if(!plc) {
         pdebug(DEBUG_WARN,"Called with null pointer.");
         return PLCTAG_ERR_NULL_PTR;
     }
@@ -142,7 +336,36 @@ int get_session_status(eip_session_p session)
 
      pdebug(DEBUG_DETAIL,"Done.");
 
-     return session->status;
+     return plc->status;
+}
+
+
+
+int logix_plc_queue_request(logix_plc_p plc, logix_request_p request)
+{
+    int rc = PLCTAG_STATUS_OK;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"Session pointer is NULL!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!request) {
+        pdebug(DEBUG_WARN,"Request pointer is NULL!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!request->tag) {
+        pdebug(DEBUG_WARN,"Request has NULL tag pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    critical_block(plc->mutex) {
+        /* put the new request at the end */
+        rc = vector_put(plc->requests, vector_length(plc->requests), request);
+    }
+
+    return rc;
 }
 
 
@@ -152,51 +375,65 @@ int get_session_status(eip_session_p session)
  **********************************************************************/
 
 
-void session_destroy(void *session_arg, int arg_count, void **args)
+void plc_destroy(void *plc_arg, int arg_count, void **args)
 {
-    eip_session_p session;
+    logix_plc_p plc;
 
     (void)arg_count;
     (void)args;
 
     pdebug(DEBUG_INFO,"Starting");
 
-    if(!session_arg) {
+    if(!plc_arg) {
         pdebug(DEBUG_WARN,"Session passed is NULL!");
         return;
     }
 
-    session = session_arg;
+    plc = plc_arg;
 
-    if(session->monitor) {
+    if(plc->monitor) {
         pdebug(DEBUG_DETAIL,"Releasing monitor job.");
-        session->monitor = rc_dec(session->monitor);
+        plc->monitor = rc_dec(plc->monitor);
     }
 
-    if(session->mutex) {
-        pdebug(DEBUG_DETAIL,"Freeing session mutex.");
-        mutex_destroy(&session->mutex);
+    if(plc->mutex) {
+        pdebug(DEBUG_DETAIL,"Freeing plc mutex.");
+        mutex_destroy(&plc->mutex);
     }
 
-    if(session->full_path) {
-        mem_free(session->full_path);
+    if(plc->requests) {
+        for(int i = 0; i < vector_length(plc->requests); i++) {
+            logix_request_p request = vector_get(plc->requests, i);
+
+            if(request) {
+                rc_dec(request);
+            }
+        }
+
+        vector_destroy(plc->requests);
+
+        plc->requests = NULL;
     }
 
-    if(session->host) {
-        mem_free(session->host);
+    if(plc->full_path) {
+        mem_free(plc->full_path);
     }
 
-    if(session->path) {
-        mem_free(session->path);
+    if(plc->host) {
+        mem_free(plc->host);
     }
 
-    if(session->sock) {
-        socket_close(session->sock);
-        socket_destroy(&session->sock);
+    if(plc->path) {
+        mem_free(plc->path);
     }
 
-    if(session->data) {
-        bytebuf_destroy(session->data);
+    if(plc->sock) {
+        socket_close(plc->sock);
+        socket_destroy(&plc->sock);
+    }
+
+    if(plc->data) {
+        bytebuf_destroy(plc->data);
     }
 
     pdebug(DEBUG_INFO,"Done");
@@ -204,9 +441,9 @@ void session_destroy(void *session_arg, int arg_count, void **args)
 
 
 
-job_exit_type session_monitor(int arg_count, void **args)
+job_exit_type plc_monitor(int arg_count, void **args)
 {
-    eip_session_p session;
+    logix_plc_p plc;
     int rc = PLCTAG_STATUS_OK;
 
     if(!args) {
@@ -219,56 +456,58 @@ job_exit_type session_monitor(int arg_count, void **args)
         return JOB_DONE;
     }
 
-    session = args[0];
-    if(!session) {
+    plc = args[0];
+    if(!plc) {
         pdebug(DEBUG_WARN,"Session argument is NULL!");
         return JOB_DONE;
     }
 
-    switch(session->state) {
+    switch(plc->state) {
         case SESSION_STARTING:
             /* set up the socket */
             pdebug(DEBUG_DETAIL,"Setting up socket.");
 
-            rc = socket_create(&session->sock);
+            rc = socket_create(&plc->sock);
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Unable to create socket!");
                 return JOB_DONE;
             }
 
             /* FIXME - this blocks! */
-            rc = socket_connect_tcp(session->sock, session->host, session->port);
+            rc = socket_connect_tcp(plc->sock, plc->host, plc->port);
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Unable to connect to PLC!");
                 return JOB_DONE;
             }
 
-            /* set up session next. */
-            session->state = SESSION_OPEN_SESSION;
+            /* set up plc next. */
+            plc->state = SESSION_OPEN_SESSION;
 
             break;
 
         case SESSION_OPEN_SESSION:
-            /* register session */
-            pdebug(DEBUG_DETAIL,"Registering session.");
+            /* register plc */
+            pdebug(DEBUG_DETAIL,"Registering plc.");
 
-            rc = register_session(session);
+            rc = register_plc(plc);
             if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to register session!");
-                session->status = rc;
+                pdebug(DEBUG_WARN,"Unable to register plc!");
+                plc->status = rc;
                 return JOB_DONE;
             }
 
-            session->state = SESSION_RUNNING;
+            plc->state = SESSION_RUNNING;
 
             break;
 
         case SESSION_RUNNING:
-            /* check for incoming data. */
-
-            /* check for outgoing data. */
-
-            /* FIXME - implement something! */
+            /* this is synchronous for now. */
+            rc = process_request(plc);
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Unable to process request!");
+                plc->status = rc;
+                return JOB_DONE;
+            }
 
             break;
     }
@@ -278,17 +517,60 @@ job_exit_type session_monitor(int arg_count, void **args)
 
 
 
+/*
+ * Check to see if there is a pending request.  If there is, then
+ * try to process it.
+ */
+
+int process_request(logix_plc_p plc)
+{
+    int rc = PLCTAG_STATUS_OK;
+    logix_request_p request;
+
+    critical_block(plc->mutex) {
+        /* pop one off the beginning treating the requests list as a queue. */
+        request = vector_remove(plc->requests, 0);
+    }
+
+    if(request) {
+        /* there is something to do. */
+        if(request->abort_requested) {
+            /* clean up the request. */
+            pdebug(DEBUG_DETAIL,"Request not started and abort requested.");
+
+            rc_dec(request);
+
+            return PLCTAG_STATUS_OK;
+        }
+
+        if(request->read_requested) {
+            return process_read_request(plc, request);
+        } else if(request->write_requested) {
+            return process_write_request(plc, request);
+        }
+    } else {
+        pdebug(DEBUG_SPEW,"No request to process.");
+    }
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+int process_read_request(logix_plc_p plc, logix_request_p request)
+{
+
+}
 
 
 
-int register_session(eip_session_p session)
+int register_plc(logix_plc_p plc)
 {
     int rc = PLCTAG_STATUS_OK;
 
-    /* session response data */
+    /* plc response data */
     uint16_t command = 0;
     uint16_t length = 0;
-    uint32_t session_handle= 0;
+    uint32_t plc_handle= 0;
     uint32_t status = 0;
     uint64_t sender_context = 0;
     uint32_t options = 0;
@@ -296,41 +578,41 @@ int register_session(eip_session_p session)
     pdebug(DEBUG_INFO, "Starting.");
 
     /*
-     * clear the session data.
+     * clear the plc data.
      *
      * We use the receiving buffer because we do not have a request and nothing can
      * be coming in on the socket yet.
      */
-    bytebuf_reset(session->data);
+    bytebuf_reset(plc->data);
 
     /* request the specific EIP/CIP version */
-    rc = marshal_register_session(session->data,(uint16_t)AB_EIP_VERSION, (uint16_t)0);
+    rc = marshal_register_plc(plc->data,(uint16_t)AB_EIP_VERSION, (uint16_t)0);
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to marshall register session packet!");
+        pdebug(DEBUG_WARN,"Unable to marshall register plc packet!");
         return rc;
     }
 
-    rc = send_eip_packet(session->sock, (uint16_t)AB_EIP_REGISTER_SESSION, (uint32_t)session->session_handle,(uint64_t)0, session->data);
+    rc = send_eip_packet(plc->sock, (uint16_t)AB_EIP_REGISTER_SESSION, (uint32_t)plc->plc_handle,(uint64_t)0, plc->data);
     if(rc != PLCTAG_STATUS_OK) {
-        /* FIXME - should we kill the session at this point? */
+        /* FIXME - should we kill the plc at this point? */
         pdebug(DEBUG_WARN,"Unable to send packet!");
         return rc;
     }
 
     /* reset the buffer so that we can read in data. */
-    bytebuf_reset(session->data);
+    bytebuf_reset(plc->data);
 
-    rc = receive_eip_packet(session->sock, session->data);
+    rc = receive_eip_packet(plc->sock, plc->data);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to read in response packet!");
         return rc;
     }
 
     /* set the cursor back to the start. */
-    bytebuf_set_cursor(session->data, 0);
+    bytebuf_set_cursor(plc->data, 0);
 
     /* parse the header. */
-    rc = unmarshal_eip_header(session->data, &command, &length, &session_handle, &status, &sender_context, &options);
+    rc = unmarshal_eip_header(plc->data, &command, &length, &plc_handle, &status, &sender_context, &options);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Error parsing EIP encapsulation header!");
         return rc;
@@ -349,13 +631,13 @@ int register_session(eip_session_p session)
     }
 
     /*
-     * after all that, save the session handle, we will
+     * after all that, save the plc handle, we will
      * use it in future packets.
      */
-    session->session_handle = session_handle;
-    session->status = PLCTAG_STATUS_OK;
+    plc->plc_handle = plc_handle;
+    plc->status = PLCTAG_STATUS_OK;
 
-    pdebug(DEBUG_DETAIL,"Using session handle %x.", session_handle);
+    pdebug(DEBUG_DETAIL,"Using plc handle %x.", plc_handle);
 
     pdebug(DEBUG_INFO, "Done.");
 
@@ -369,45 +651,59 @@ int register_session(eip_session_p session)
  * path looks like "192.168.1.10<:port>,path,to,cpu"
  */
 
-eip_session_p create_session(const char *path)
+logix_plc_p create_plc(const char *path)
 {
-    eip_session_p session = NULL;
+    logix_plc_p plc = NULL;
     int rc = PLCTAG_STATUS_OK;
 
-    session = rc_alloc(sizeof(struct eip_session_t), session_destroy, 0);
-    if(!session) {
+    plc = rc_alloc(sizeof(struct logix_plc_t), plc_destroy);
+    if(!plc) {
         pdebug(DEBUG_ERROR,"Unable to allocate PLC struct!");
         return NULL;
     }
 
-    session->resource_count = 1; /* MAGIC */
-    session->status = PLCTAG_STATUS_PENDING;
-    session->sock = NULL;
-    session->state = SESSION_STARTING;
-    session->port = AB_EIP_DEFAULT_PORT;
+    /* set up the vtable for this kind of plc. */
+    plc->base.tag_abort = tag_abort;
+    plc->base.tag_read = tag_read;
+    plc->base.tag_status = tag_status;
+    plc->base.tag_write = tag_write;
 
-    rc = parse_path(path, &session->host, &session->port, &session->path);
+    /* set the remaining PLC struct members. */
+    plc->resource_count = 1; /* MAGIC */
+    plc->status = PLCTAG_STATUS_PENDING;
+    plc->sock = NULL;
+    plc->state = SESSION_STARTING;
+    plc->port = AB_EIP_DEFAULT_PORT;
+
+    rc = parse_path(path, &plc->host, &plc->port, &plc->path);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR,"Unable to parse path!");
-        rc_dec(session);
+        rc_dec(plc);
         return NULL;
     }
 
-    session->data = bytebuf_create(550);  /* MAGIC */
-    if(!session->data) {
-        pdebug(DEBUG_ERROR,"Unable to create session buffer!");
-        rc_dec(session);
+    plc->data = bytebuf_create(550);  /* MAGIC */
+    if(!plc->data) {
+        pdebug(DEBUG_ERROR,"Unable to create plc buffer!");
+        rc_dec(plc);
         return NULL;
     }
 
-    rc = mutex_create(&session->mutex);
+    rc = mutex_create(&plc->mutex);
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_ERROR,"Unable to create session mutex!");
-        rc_dec(session);
+        pdebug(DEBUG_ERROR,"Unable to create plc mutex!");
+        rc_dec(plc);
         return NULL;
     }
 
-    return session;
+    plc->requests = vector_create(20, 10);
+    if(!plc->requests) {
+        pdebug(DEBUG_ERROR,"Unable to create plc request list!");
+        rc_dec(plc);
+        return NULL;
+    }
+
+    return plc;
 }
 
 

@@ -29,7 +29,7 @@
 
 
 
-impl_tag_p ab_tag_create(attr attribs)
+impl_plc_p ab_plc_create(attr attribs)
 {
     const char *plc = attr_get_str(attribs,"plc", attr_get_str(attribs, "cpu", "NONE"));
 
