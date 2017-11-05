@@ -35,6 +35,7 @@
 #include <lib/libplctag.h>
 #include <platform.h>
 #include <util/attr.h>
+#include <util/bytebuf.h>
 #include <util/refcount.h>
 
 
@@ -42,31 +43,32 @@
 extern const char *VERSION;
 extern const int VERSION_ARRAY[3];
 
-
-
-typedef struct impl_tag_t *impl_tag_p;
-
-struct impl_vtable {
-    int (*abort)(impl_tag_p tag);
-    int (*get_size)(impl_tag_p tag);
-    int (*get_status)(impl_tag_p tag);
-    int (*start_read)(impl_tag_p tag);
-    int (*start_write)(impl_tag_p tag);
-
-    int (*get_int)(impl_tag_p tag, int offset, int size, int64_t *val);
-    int (*set_int)(impl_tag_p tag, int offset, int size, int64_t val);
-    int (*get_double)(impl_tag_p tag, int offset, int size, double *val);
-    int (*set_double)(impl_tag_p tag, int offset, int size, double val);
-};
-
+typedef struct tag_t *tag_p;
+typedef struct plc_t *plc_p;
 
 /*
  * All implementations must "subclass" this in some manner.
  */
 
-struct impl_tag_t {
-    struct impl_vtable *vtable;
+struct plc_t {
+    int (*tag_status)(plc_p plc, tag_p tag);
+    int (*tag_abort)(plc_p plc, tag_p tag);
+    int (*tag_read)(plc_p plc, tag_p tag);
+    int (*tag_write)(plc_p plc, tag_p tag);
 };
+
+
+typedef plc_p (*plc_create_func)(tag_p tag);
+
+
+/*
+ * Internal API functions.
+ *
+ * These shield implementations from the interior details of generic tags.
+ */
+extern bytebuf_p tag_get_data(tag_p tag);
+extern int tag_set_data(tag_p tag, bytebuf_p data);
+extern attr tag_get_attribs(tag_p tag);
 
 
 

@@ -26,8 +26,8 @@
 
 typedef void (*rc_cleanup_func)(void *, int extra_arg_count, void **);
 
-#define rc_alloc(size, cleanup_func, ...) rc_alloc_impl(__func__, __LINE__, size, cleanup_func, __VA_ARGS__)
-extern void *rc_alloc_impl(const char *func, int line_num, int size, rc_cleanup_func cleaner, int extra_arg_count, ...);
+#define rc_alloc(size, ...) rc_alloc_impl(__func__, __LINE__, size, (COUNT_NARG(__VA_ARGS__)-1), __VA_ARGS__)
+extern void *rc_alloc_impl(const char *func, int line_num, int size, int extra_arg_count, rc_cleanup_func cleaner, ...);
 
 #define rc_register_cleanup(ref, cleanup_func, ...) rc_register_cleanup_impl(__func__, __LINE__, ref, cleanup_func, __VA_ARGS__)
 extern int rc_register_cleanup_impl(const char *func, int line_num, void *ref, rc_cleanup_func cleaner, int extra_arg_count, ...);

@@ -22,15 +22,15 @@
 #include <util/attr.h>
 #include <util/debug.h>
 #include <util/refcount.h>
+#include <util/resource.h>
 #include <lib/lib.h>
 #include <lib/libplctag.h>
-//#include <system/tag.h>
 
 
 #define MAX_SYSTEM_TAG_SIZE (30)
 
 struct system_tag_t {
-    struct impl_tag_t base_tag;
+    struct plc_t base_plc;
 
     int64_t creation_time;
 };
@@ -38,56 +38,38 @@ struct system_tag_t {
 typedef struct system_tag_t *system_tag_p;
 
 
-static int abort_operation(impl_tag_p tag);
-static int size_debug(impl_tag_p tag);
-static int size_version(impl_tag_p tag);
-static int get_status(impl_tag_p tag);
-static int read_tag(impl_tag_p tag);
-static int write_tag(impl_tag_p tag);
-static int get_int_debug(impl_tag_p tag, int offset, int size, int64_t *val);
-static int set_int_debug(impl_tag_p tag, int offset, int size, int64_t val);
-static int get_int_version(impl_tag_p tag, int offset, int size, int64_t *val);
-static int set_int_version(impl_tag_p tag, int offset, int size, int64_t val);
-static int get_double(impl_tag_p tag, int offset, int size, double *val);
-static int set_double(impl_tag_p tag, int offset, int size, double val);
+
+static void plc_destroy(void *tag_arg, int arg_count, void **args);
 
 
-static void tag_destroy(void *tag_arg, int arg_count, void **args);
+static int debug_abort(plc_p plc, tag_p tag);
+static int debug_read(plc_p plc, tag_p tag);
+static int debug_status(plc_p plc, tag_p tag);
+static int debug_write(plc_p plc, tag_p tag);
 
-/*
-VTable:
-
-    int (*abort)(impl_tag_p tag);
-    int (*get_size)(impl_tag_p tag);
-    int (*get_status)(impl_tag_p tag);
-    int (*start_read)(impl_tag_p tag);
-    int (*start_write)(impl_tag_p tag);
-
-    int (*get_int)(impl_tag_p tag, int offset, int size, int64_t *val);
-    int (*get_double)(impl_tag_p tag, int offset, int size, double *val);
-    int (*set_int)(impl_tag_p tag, int offset, int size, int64_t val);
-    int (*set_double)(impl_tag_p tag, int offset, int size, double val);
-*/
-
-struct impl_vtable debug_tag_vtable = {abort_operation, size_debug, get_status, read_tag, write_tag,
-                                        get_int_debug, set_int_debug, get_double, set_double};
-
-struct impl_vtable version_tag_vtable = {abort_operation, size_version, get_status, read_tag, write_tag,
-                                        get_int_version, set_int_version, get_double, set_double};
+static int version_abort(plc_p plc, tag_p tag);
+static int version_read(plc_p plc, tag_p tag);
+static int version_status(plc_p plc, tag_p tag);
+static int version_write(plc_p plc, tag_p tag);
 
 
 
-
-
-
-impl_tag_p system_tag_create(attr attribs)
+plc_p system_plc_create(tag_p tag)
 {
-    system_tag_p tag = NULL;
-    const char *name = attr_get_str(attribs, "name", NULL);
+    plc_p plc = NULL;
+    attr attribs = NULL;
+    const char *name = NULL;
 
     pdebug(DEBUG_INFO,"Starting.");
 
+    attribs = tag_get_attribs(tag);
+    if(!attribs) {
+        pdebug(DEBUG_WARN,"Tag passed with NULL attributes!");
+        return NULL;
+    }
+
     /* check the name, if none given, punt. */
+    name = attr_get_str(attribs,"name",NULL);
     if(!name || str_length(name) < 1) {
         pdebug(DEBUG_ERROR, "System tag name is empty or missing!");
         return NULL;
@@ -96,189 +78,219 @@ impl_tag_p system_tag_create(attr attribs)
     pdebug(DEBUG_DETAIL,"Creating special tag %s", name);
 
     /*
-     * allocate memory for the new tag.  Do this first so that
+     * allocate memory for the new PLC.  Do this first so that
      * we have a vehicle for returning status.
      */
 
-    tag = rc_alloc(sizeof(struct system_tag_t), tag_destroy, 0);
-    if(!tag) {
-        pdebug(DEBUG_ERROR,"Unable to allocate memory for system tag!");
+    plc = rc_alloc(sizeof(struct plc_t), plc_destroy);
+    if(!plc) {
+        pdebug(DEBUG_ERROR,"Unable to allocate memory for system plc!");
         return NULL;
     }
 
-    tag->creation_time = time_ms();
+    //tag->creation_time = time_ms();
 
     /*
      * Set the vtable up depending on the name.
      */
     if(str_cmp_i(name,"debug") == 0) {
-        tag->base_tag.vtable = &debug_tag_vtable;
+        plc->tag_abort = debug_abort;
+        plc->tag_read = debug_read;
+        plc->tag_status = debug_status;
+        plc->tag_write = debug_write;
     } else if(str_cmp_i(name,"version") == 0) {
-        tag->base_tag.vtable = &version_tag_vtable;
+        plc->tag_abort = version_abort;
+        plc->tag_read = version_read;
+        plc->tag_status = version_status;
+        plc->tag_write = version_write;
     } else {
         pdebug(DEBUG_WARN,"Unknown tag %s!",name);
-        tag_destroy(tag, 0, NULL);
+        rc_dec(plc);
         return NULL;
     }
 
     pdebug(DEBUG_INFO,"Done");
 
-    return (impl_tag_p)tag;
+    return plc;
 }
 
 
-int abort_operation(impl_tag_p tag)
+
+
+/***********************************************************************
+ ************************** Debug Functions ****************************
+ **********************************************************************/
+
+int debug_abort(plc_p plc, tag_p tag)
 {
+    (void)plc;
     (void)tag;
 
     return PLCTAG_STATUS_OK;
 }
 
 
-int get_status(impl_tag_p arg)
+int debug_read(plc_p plc, tag_p tag)
 {
-    system_tag_p tag = (system_tag_p)arg;
+    int rc;
+    int32_t debug_level;
+    bytebuf_p data;
 
-    /* fake some pending set up time. */
-    if(time_ms() < (tag->creation_time + 100)) {
-        return PLCTAG_STATUS_PENDING;
-    } else {
-        return PLCTAG_STATUS_OK;
+    (void)plc;
+
+    /* check the tag data buffer. */
+    data = tag_get_data(tag);
+    if(!data) {
+        data = bytebuf_create(4,0x10,0x3210,0x76543210,0x3210,0x7654321);
+        if(!data) {
+            pdebug(DEBUG_ERROR,"Unable to allocate new byte buf for data!");
+            return PLCTAG_ERR_NO_MEM;
+        }
+
+        tag_set_data(tag, data); /* FIXME - should check return code. */
     }
+
+    /* get the debug level */
+    debug_level = (int32_t)get_debug_level();
+
+    rc = bytebuf_set_cursor(data, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error setting tag data cursor!");
+        return rc;
+    }
+
+    /* get the new level */
+    rc = bytebuf_set_int32(data, debug_level);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error writing the debug level into the tag data!");
+        return rc;
+    }
+
+    pdebug(DEBUG_INFO,"Debug level %d",(int)debug_level);
+
+    return PLCTAG_STATUS_OK;
 }
 
 
-int read_tag(impl_tag_p tag)
+int debug_status(plc_p plc, tag_p tag)
 {
+    (void)plc;
     (void)tag;
 
     return PLCTAG_STATUS_OK;
 }
 
 
-int write_tag(impl_tag_p tag)
+int debug_write(plc_p plc, tag_p tag)
 {
+    int rc;
+    int32_t debug_level;
+    bytebuf_p data;
+
+    (void)plc;
+
+    data = tag_get_data(tag);
+    if(!data) {
+        pdebug(DEBUG_WARN,"Tag has no data!");
+        return PLCTAG_ERR_NO_DATA;
+    }
+
+    rc = bytebuf_set_cursor(data, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error setting tag data cursor!");
+        return rc;
+    }
+
+    /* get the new level */
+    rc = bytebuf_get_int32(data, &debug_level);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting new debug level!");
+        return rc;
+    }
+
+    pdebug(DEBUG_INFO,"Old debug level %d, setting to %d",(int)get_debug_level(), (int)debug_level);
+
+    /* set the debug level */
+    set_debug_level((int)debug_level);
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+/***********************************************************************
+ ************************* Version Functions ***************************
+ **********************************************************************/
+
+int version_abort(plc_p plc, tag_p tag)
+{
+    (void)plc;
     (void)tag;
 
     return PLCTAG_STATUS_OK;
 }
 
 
-int size_debug(impl_tag_p tag)
+int version_read(plc_p plc, tag_p tag)
 {
-    (void)tag;
+    int rc;
+    bytebuf_p data;
 
-    return sizeof(int32_t);
-}
+    (void)plc;
 
+    /* check the tag data buffer. */
+    data = tag_get_data(tag);
+    if(!data) {
+        data = bytebuf_create(12,0x10,0x3210,0x76543210,0x3210,0x7654321);
+        if(!data) {
+            pdebug(DEBUG_ERROR,"Unable to allocate new byte buf for data!");
+            return PLCTAG_ERR_NO_MEM;
+        }
 
-int size_version(impl_tag_p tag)
-{
-    (void)tag;
-
-    return 3 * sizeof(int32_t);
-}
-
-
-int get_int_debug(impl_tag_p tag, int offset, int size, int64_t *val)
-{
-    (void)tag;
-
-    if(!val) {
-        return PLCTAG_ERR_NULL_PTR;
+        tag_set_data(tag, data); /* FIXME - should check return code. */
     }
 
-    if(offset != 0) {
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
+    rc = bytebuf_set_cursor(data, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error setting tag data cursor!");
+        return rc;
     }
 
-    if(size != 4) {
-        return PLCTAG_ERR_NOT_IMPLEMENTED;
+    /* get the version info */
+    for(int i=0; i < 3; i++) {
+        rc = bytebuf_set_int32(data, (int32_t)VERSION_ARRAY[i]);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error writing the version info into the tag data!");
+            return rc;
+        }
     }
-
-    *val = (int64_t)get_debug_level();
 
     return PLCTAG_STATUS_OK;
 }
 
 
-int set_int_debug(impl_tag_p tag, int offset, int size, int64_t val)
+int version_status(plc_p plc, tag_p tag)
 {
+    (void)plc;
     (void)tag;
-
-    if(!val) {
-        return PLCTAG_ERR_NULL_PTR;
-    }
-
-    if(offset != 0) {
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
-
-    if(size != 4) {
-        return PLCTAG_ERR_NOT_IMPLEMENTED;
-    }
-
-    set_debug_level((int)(val));
 
     return PLCTAG_STATUS_OK;
 }
 
 
-int get_int_version(impl_tag_p tag, int offset, int size, int64_t *val)
+int version_write(plc_p plc, tag_p tag)
 {
+    (void)plc;
     (void)tag;
-
-    if(!val) {
-        return PLCTAG_ERR_NULL_PTR;
-    }
-
-    if(!(offset == 0 || offset == 4 || offset == 8)) {
-        return PLCTAG_ERR_OUT_OF_BOUNDS;
-    }
-
-    if(size != 4) {
-        return PLCTAG_ERR_NOT_IMPLEMENTED;
-    }
-
-    *val = (int64_t)VERSION_ARRAY[offset/4];
-
-    return PLCTAG_STATUS_OK;
-}
-
-int set_int_version(impl_tag_p tag, int offset, int size, int64_t val)
-{
-    (void)tag;
-    (void)offset;
-    (void)size;
-    (void)val;
 
     return PLCTAG_ERR_NOT_IMPLEMENTED;
 }
 
-int get_double(impl_tag_p tag, int offset, int size, double *val)
-{
-    (void)tag;
-    (void)offset;
-    (void)size;
-    (void)val;
 
-    return PLCTAG_ERR_NOT_IMPLEMENTED;
-}
+/***********************************************************************
+ ************************** Helper Functions ***************************
+ **********************************************************************/
 
-int set_double(impl_tag_p tag, int offset, int size, double val)
-{
-    (void)tag;
-    (void)offset;
-    (void)size;
-    (void)val;
-
-    return PLCTAG_ERR_NOT_IMPLEMENTED;
-}
-
-
-
-
-void tag_destroy(void *tag_arg, int arg_count, void **args)
+void plc_destroy(void *tag_arg, int arg_count, void **args)
 {
     (void)tag_arg;
     (void)arg_count;

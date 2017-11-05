@@ -26,14 +26,33 @@
 
 typedef struct bytebuf_t *bytebuf_p;
 
-extern bytebuf_p bytebuf_create(int initial_cap);
+extern bytebuf_p bytebuf_create(int initial_cap, uint32_t int16_bo, uint32_t int32_bo, uint32_t int64_bo, uint32_t float32_bo, uint32_t float64_bo);
 extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
 extern int bytebuf_get_cursor(bytebuf_p buf);
-extern int bytebuf_get_int(bytebuf_p buf, int size, int *byte_order, int64_t *val);
-extern int bytebuf_set_int(bytebuf_p buf, int size, int *byte_order, int64_t val);
+//~ extern int bytebuf_get_int(bytebuf_p buf, int size, int64_t *val);
+//~ extern int bytebuf_set_int(bytebuf_p buf, int size, int64_t val);
 extern int bytebuf_get_size(bytebuf_p buf);
 extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
 extern int bytebuf_reset(bytebuf_p buf);
 extern int bytebuf_destroy(bytebuf_p buf);
+
+/* data accessors */
+extern int bytebuf_get_int8(bytebuf_p buf, int8_t *val);
+extern int bytebuf_set_int8(bytebuf_p buf, int8_t val);
+
+extern int bytebuf_get_int16(bytebuf_p buf, int16_t *val);
+extern int bytebuf_set_int16(bytebuf_p buf, int16_t val);
+
+extern int bytebuf_get_int32(bytebuf_p buf, int32_t *val);
+extern int bytebuf_set_int32(bytebuf_p buf, int32_t val);
+
+extern int bytebuf_get_int64(bytebuf_p buf, int64_t *val);
+extern int bytebuf_set_int64(bytebuf_p buf, int64_t val);
+
+extern int bytebuf_get_float32(bytebuf_p buf, float *val);
+extern int bytebuf_set_float32(bytebuf_p buf, float val);
+
+extern int bytebuf_get_float64(bytebuf_p buf, double *val);
+extern int bytebuf_set_float64(bytebuf_p buf, double val);
 
 #endif

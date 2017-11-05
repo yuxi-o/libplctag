@@ -28,12 +28,14 @@
 #include <lib/lib.h>
 #include <platform.h>
 #include <util/attr.h>
+#include <util/bytebuf.h>
 #include <util/debug.h>
 #include <util/hashtable.h>
+#include <util/rc_thread.h>
 #include <util/resource.h>
-#include <util/job.h>
+//~ #include <util/job.h>
 #include <system/system.h>
-#include <ab/ab.h>
+//~ #include <ab/ab.h>
 
 
 
@@ -46,15 +48,23 @@ const int VERSION_ARRAY[3] = {2,0,5};
 
 
 
-typedef struct tag_t *tag_p;
 
 struct tag_t {
+    tag_id id;
+
     mutex_p api_mut;
     mutex_p external_mut;
-    tag_id id;
+
+    attr attribs;
+    int read_in_flight;
+    int write_in_flight;
+    int create_in_flight;
+
     int64_t read_cache_expire_ms;
     int64_t read_cache_duration_ms;
-    impl_tag_p impl_tag;
+
+    plc_p plc;
+    bytebuf_p data;
 };
 
 
@@ -247,7 +257,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     attr attribs = NULL;
     int rc = PLCTAG_STATUS_OK;
     int read_cache_ms = 0;
-    const char *protocol = NULL;
+    const char *plc_type = NULL;
 
     pdebug(DEBUG_INFO,"Starting");
 
@@ -276,19 +286,20 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
         return PLCTAG_ERR_NO_MEM;
     }
 
+    tag->create_in_flight = 1;
+    tag->attribs = attribs;
+
     /* set up the mutexes */
     rc = mutex_create(&tag->api_mut);
     if(rc != PLCTAG_STATUS_OK) {
-        attr_destroy(attribs);
-        tag_destroy(tag, 0, NULL);
+        rc_dec(tag);
         pdebug(DEBUG_ERROR,"Unable to create API mutex!");
         return rc;
     }
 
     rc = mutex_create(&tag->external_mut);
     if(rc != PLCTAG_STATUS_OK) {
-        attr_destroy(attribs);
-        tag_destroy(tag, 0, NULL);
+        rc_dec(tag);
         pdebug(DEBUG_ERROR,"Unable to create external mutex!");
         return rc;
     }
@@ -310,23 +321,23 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
      * Everything else is specific to the protocol.
      */
 
-    protocol = attr_get_str(attribs, "protocol", "NONE");
-    if(str_cmp_i(protocol,"ab_eip") == 0 || str_cmp_i(protocol, "ab-eip") == 0) {
-        /* Allen-Bradley PLC */
-        tag->impl_tag = ab_tag_create(attribs);
-    } else if(str_cmp_i(protocol, "system") == 0) {
-        tag->impl_tag = system_tag_create(attribs);
+    plc_type = attr_get_str(attribs, "plc", "NONE");
+    if(str_cmp_i(plc_type,"logix") == 0) {
+        /* Allen-Bradley ControlLogix or CompactLogix PLC */
+        //tag->impl_plc = logix_plc_create(tag);
+    } else if(str_cmp_i(plc_type, "system") == 0) {
+        tag->plc = system_plc_create(tag);
+    } else {
+        pdebug(DEBUG_WARN,"Unsupported PLC type %s!", plc_type);
+        rc_dec(tag);
+        return PLCTAG_ERR_BAD_PARAM;
     }
 
-    if(!tag->impl_tag) {
-        pdebug(DEBUG_ERROR,"Unable to create tag for protocol %s!",protocol);
-        attr_destroy(attribs);
-        tag_destroy(tag, 0, NULL);
+    if(!tag->plc) {
+        pdebug(DEBUG_ERROR,"Unable to create or find PLC %s!",plc_type);
+        rc_dec(tag);
         return PLCTAG_ERR_CREATE;
     }
-
-    /* we do not need these anymore. */
-    attr_destroy(attribs);
 
     /* insert the tag into the tag hashtable. */
     insert_tag(tag);
@@ -457,7 +468,7 @@ LIB_EXPORT int plc_tag_abort(tag_id id)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->abort(tag->impl_tag);
+        rc = tag->plc->tag_abort(tag->plc, tag);
     }
 
     rc_dec(tag);
@@ -545,6 +556,12 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
     }
 
     critical_block(tag->api_mut) {
+        if(tag->write_in_flight || tag->create_in_flight) {
+            pdebug(DEBUG_WARN,"Conflicting operation already in progress!");
+            rc = PLCTAG_ERR_BUSY;
+            break;
+        }
+
         /* check read cache, if not expired, return existing data. */
         if(tag->read_cache_expire_ms > time_ms()) {
             pdebug(DEBUG_INFO, "Returning cached data.");
@@ -553,12 +570,14 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
         }
 
         /* the protocol implementation does not do the timeout. */
-        rc = tag->impl_tag->vtable->start_read(tag->impl_tag);
+        rc = tag->plc->tag_read(tag->plc, tag);
 
         /* if error, return now */
         if(rc != PLCTAG_STATUS_PENDING && rc != PLCTAG_STATUS_OK) {
             break;
         }
+
+        tag->read_in_flight = 1;
 
         /* set up the cache time */
         if(tag->read_cache_duration_ms) {
@@ -615,7 +634,13 @@ LIB_EXPORT int plc_tag_status(tag_id id)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->get_status(tag->impl_tag);
+        rc = tag->plc->tag_status(tag->plc, tag);
+
+        if(rc == PLCTAG_STATUS_OK) {
+            tag->create_in_flight = 0;
+            tag->read_in_flight = 0;
+            tag->write_in_flight = 0;
+        }
     }
 
     rc_dec(tag);
@@ -657,8 +682,14 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
     }
 
     critical_block(tag->api_mut) {
+        if(tag->read_in_flight || tag->create_in_flight) {
+            pdebug(DEBUG_WARN,"Conflicting operation already in progress!");
+            rc = PLCTAG_ERR_BUSY;
+            break;
+        }
+
         /* the protocol implementation does not do the timeout. */
-        rc = tag->impl_tag->vtable->start_write(tag->impl_tag);
+        rc = tag->plc->tag_write(tag->plc, tag);
 
         /* if error, return now */
         if(rc != PLCTAG_STATUS_PENDING && rc != PLCTAG_STATUS_OK) {
@@ -695,6 +726,7 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 {
     int result = 0;
     tag_p tag = NULL;
+    int status = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -706,10 +738,24 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
     }
 
     critical_block(tag->api_mut) {
-        result = tag->impl_tag->vtable->get_size(tag->impl_tag);
+        /* some operations can change the tag size */
+        status = tag->plc->tag_status(tag->plc, tag);
+        if(status != PLCTAG_STATUS_OK) {
+            result = status;
+            break;
+        }
+
+        if(!tag->data) {
+            result = PLCTAG_ERR_NO_DATA;
+            break;
+        }
+
+        result = bytebuf_get_size(tag->data);
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return result;
 }
@@ -726,8 +772,9 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 
 LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset)
 {
-    uint8_t res = 0;
+    uint8_t res = (uint8_t)UINT8_MAX;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -739,20 +786,35 @@ LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (uint8_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 8 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (uint8_t) tmp;
-        } else {
-            res = (uint8_t) UINT_MAX;
+        if(!tag->data) {
+            break;
         }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 1) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int8(tag->data, (int8_t*)&res);
+            }
+        }
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        res = UINT8_MAX;
     }
 
     rc_dec(tag);
 
+    pdebug(DEBUG_DETAIL,"Done.");
+
     return res;
 }
+
+
 
 LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val)
 {
@@ -769,19 +831,41 @@ LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 8 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 1) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int8(tag->data, (int8_t)val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
 
 
+
+
 LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset)
 {
-    int8_t res = 0;
+    int8_t res = (int8_t)INT8_MIN;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -793,20 +877,34 @@ LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (int8_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 8 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (int8_t)tmp;
-        } else {
-            res = (int8_t)INT8_MIN;
+        if(!tag->data) {
+            break;
         }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 1) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int8(tag->data, &res);
+            }
+        }
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        res = INT8_MIN;
     }
 
     rc_dec(tag);
 
+    pdebug(DEBUG_DETAIL,"Done.");
+
     return res;
 }
+
 
 LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val)
 {
@@ -823,10 +921,29 @@ LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 8 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 1) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int8(tag->data, val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -838,8 +955,9 @@ LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val)
 
 LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset)
 {
-    uint16_t res = 0;
+    uint16_t res = (uint16_t)UINT16_MAX;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -851,17 +969,30 @@ LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (uint16_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 16 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (uint16_t) tmp;
-        } else {
-            res = (uint16_t) UINT16_MAX;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 2) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int16(tag->data, (int16_t*)&res);
+            }
         }
     }
 
+    if(rc != PLCTAG_STATUS_OK) {
+        res = UINT16_MAX;
+    }
+
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -882,10 +1013,29 @@ LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 16 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 2) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int16(tag->data, (int16_t)val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -893,8 +1043,9 @@ LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val)
 
 LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset)
 {
-    int16_t res = 0;
+    int16_t res = (int16_t)INT16_MIN;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -906,17 +1057,30 @@ LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (int16_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 16 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (int16_t) tmp;
-        } else {
-            res = (int16_t) INT16_MIN;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 2) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int16(tag->data, &res);
+            }
         }
     }
 
+    if(rc != PLCTAG_STATUS_OK) {
+        res = INT16_MIN;
+    }
+
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -938,10 +1102,29 @@ LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 16 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 2) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int16(tag->data, val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -952,8 +1135,9 @@ LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val)
 
 LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset)
 {
-    uint32_t res = 0;
+    uint32_t res = (uint32_t)UINT32_MAX;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -965,17 +1149,30 @@ LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (uint32_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 32 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (uint32_t) tmp;
-        } else {
-            res = (uint32_t) UINT32_MAX;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 4) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int32(tag->data, (int32_t*)&res);
+            }
         }
     }
 
+    if(rc != PLCTAG_STATUS_OK) {
+        res = UINT32_MAX;
+    }
+
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -996,10 +1193,29 @@ LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 32 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 4) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int32(tag->data, (int32_t)val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -1007,8 +1223,9 @@ LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val)
 
 LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset)
 {
-    int32_t res = 0;
+    int32_t res = (int32_t)INT32_MIN;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1020,17 +1237,30 @@ LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (int32_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 32 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (int32_t) tmp;
-        } else {
-            res = (int32_t) INT32_MIN;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 4) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int32(tag->data, &res);
+            }
         }
     }
 
+    if(rc != PLCTAG_STATUS_OK) {
+        res = INT32_MIN;
+    }
+
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -1051,10 +1281,29 @@ LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 32 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 4) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int32(tag->data, val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -1064,8 +1313,9 @@ LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val)
 
 LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset)
 {
-    uint64_t res = 0;
+    uint64_t res = (uint64_t)UINT64_MAX;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1077,17 +1327,30 @@ LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (uint64_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 64 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (uint64_t) tmp;
-        } else {
-            res = (uint64_t) UINT64_MAX;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 8) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int64(tag->data, (int64_t*)&res);
+            }
         }
     }
 
+    if(rc != PLCTAG_STATUS_OK) {
+        res = UINT64_MAX;
+    }
+
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -1107,18 +1370,38 @@ LIB_EXPORT int plc_tag_set_uint64(tag_id id, int offset, uint64_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 64 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 8) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int64(tag->data, (int64_t)val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
 
 LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset)
 {
-    int64_t res = 0;
+    int64_t res = (int64_t)INT64_MIN;
     tag_p tag = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1130,20 +1413,34 @@ LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset)
     }
 
     critical_block(tag->api_mut) {
-        int64_t tmp;
-        int rc = (int64_t)tag->impl_tag->vtable->get_int(tag->impl_tag, offset, 64 / 8, & tmp);
+        int size;
 
-        if (rc == PLCTAG_STATUS_OK) {
-            res = (int64_t) tmp;
-        } else {
-            res = (int64_t) INT64_MIN;
+        if(!tag->data) {
+            break;
         }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 8) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_int64(tag->data, &res);
+            }
+        }
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        res = INT64_MIN;
     }
 
     rc_dec(tag);
 
+    pdebug(DEBUG_DETAIL,"Done.");
+
     return res;
 }
+
 
 LIB_EXPORT int plc_tag_set_int64(tag_id id, int offset, int64_t val)
 {
@@ -1160,10 +1457,29 @@ LIB_EXPORT int plc_tag_set_int64(tag_id id, int offset, int64_t val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_int(tag->impl_tag, offset, 64 / 8, (int64_t) val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 8) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_int64(tag->data, val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -1174,7 +1490,8 @@ LIB_EXPORT int plc_tag_set_int64(tag_id id, int offset, int64_t val)
 LIB_EXPORT float plc_tag_get_float32(tag_id id, int offset)
 {
     tag_p tag = NULL;
-    float res;
+    float res = FLT_MIN;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1182,21 +1499,34 @@ LIB_EXPORT float plc_tag_get_float32(tag_id id, int offset)
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Tag %d not found.", id);
-        return PLCTAG_ERR_NOT_FOUND;
+        return res;
     }
 
     critical_block(tag->api_mut) {
-        double tmp;
-        int rc = (float)tag->impl_tag->vtable->get_double(tag->impl_tag, offset, 4, &tmp);
+        int size;
 
-        if(rc == PLCTAG_STATUS_OK) {
-            res = (float)tmp;
-        } else {
-            res = FLT_MIN;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 4) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_float32(tag->data, &res);
+            }
         }
     }
 
-    rc_dec(tag);;
+    if(rc != PLCTAG_STATUS_OK) {
+        res = FLT_MIN;
+    }
+
+    rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -1217,10 +1547,29 @@ LIB_EXPORT int plc_tag_set_float32(tag_id id, int offset, float val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_double(tag->impl_tag, offset, 4, (double)val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 4) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_float32(tag->data, val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -1236,7 +1585,8 @@ LIB_EXPORT int plc_tag_set_float32(tag_id id, int offset, float val)
 LIB_EXPORT double plc_tag_get_float64(tag_id id, int offset)
 {
     tag_p tag = NULL;
-    double res;
+    double res = DBL_MIN;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL, "Starting.");
 
@@ -1244,18 +1594,34 @@ LIB_EXPORT double plc_tag_get_float64(tag_id id, int offset)
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Tag %d not found.", id);
-        return PLCTAG_ERR_NOT_FOUND;
+        return res;
     }
 
     critical_block(tag->api_mut) {
-        int rc = tag->impl_tag->vtable->get_double(tag->impl_tag, offset, 8, &res);
+        int size;
 
-        if(rc != PLCTAG_STATUS_OK) {
-            res = DBL_MIN;
+        if(!tag->data) {
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 8) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_get_float64(tag->data, &res);
+            }
         }
     }
 
+    if(rc != PLCTAG_STATUS_OK) {
+        res = DBL_MIN;
+    }
+
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return res;
 }
@@ -1276,15 +1642,91 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->impl_tag->vtable->set_double(tag->impl_tag, offset, 8, val);
+        int size;
+
+        if(!tag->data) {
+            rc = PLCTAG_ERR_NULL_PTR;
+            break;
+        }
+
+        size = bytebuf_get_size(tag->data);
+
+        if(offset >= 0 && (offset + 8) <= size) {
+            rc = bytebuf_set_cursor(tag->data, offset);
+
+            if(rc == PLCTAG_STATUS_OK) {
+                rc = bytebuf_set_float64(tag->data, val);
+            }
+        } else {
+            rc = PLCTAG_ERR_OUT_OF_BOUNDS;
+        }
     }
 
     rc_dec(tag);
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
 
 
+
+
+/***********************************************************************
+ ************************ Internal API Functions ***********************
+ **********************************************************************/
+
+bytebuf_p tag_get_data(tag_p tag)
+{
+    bytebuf_p data = NULL;
+
+    if(!tag) {
+        pdebug(DEBUG_WARN,"Called with NULL tag pointer!");
+        return NULL;
+    }
+
+    /* FIXME - does this really need to be mutex protected? */
+    critical_block(tag->api_mut) {
+        data = tag->data;
+    }
+
+    return data;
+}
+
+
+
+int tag_set_data(tag_p tag, bytebuf_p data)
+{
+    bytebuf_p old_buf = NULL;
+
+    if(!tag) {
+        pdebug(DEBUG_WARN,"Called with NULL tag pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    critical_block(tag->api_mut) {
+        old_buf = tag->data;
+        tag->data = data;
+    }
+
+    if(old_buf) {
+        bytebuf_destroy(old_buf);
+    }
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+attr tag_get_attribs(tag_p tag)
+{
+    if(!tag) {
+        pdebug(DEBUG_WARN,"Called with NULL tag pointer!");
+        return NULL;
+    }
+
+    /* static data once the tag is created. */
+    return tag->attribs;
+}
 
 
 
@@ -1310,7 +1752,8 @@ void tag_destroy(void *tag_arg, int arg_count, void **args)
     if(tag) {
         mutex_destroy(&tag->api_mut);
         mutex_destroy(&tag->external_mut);
-        rc_dec(tag->impl_tag);
+        rc_dec(tag->plc);
+        attr_destroy(tag->attribs);
     }
 
     pdebug(DEBUG_INFO,"Done.");
@@ -1363,10 +1806,10 @@ int insert_tag(tag_p tag)
 int wait_for_timeout(tag_p tag, int timeout)
 {
     int64_t timeout_time = timeout + time_ms();
-    int rc = tag->impl_tag->vtable->get_status(tag->impl_tag);
+    int rc = tag->plc->tag_status(tag->plc, tag);
 
     while(rc == PLCTAG_STATUS_PENDING && timeout_time > time_ms()) {
-        rc = tag->impl_tag->vtable->get_status(tag->impl_tag);
+        rc = tag->plc->tag_status(tag->plc, tag);
 
         /*
          * terminate early and do not wait again if the
@@ -1386,7 +1829,7 @@ int wait_for_timeout(tag_p tag, int timeout)
      * The create failed, so now we need to punt.
      */
     if(rc == PLCTAG_STATUS_PENDING) {
-        pdebug(DEBUG_WARN, "Create operation timed out.");
+        pdebug(DEBUG_WARN, "Operation timed out.");
         rc = PLCTAG_ERR_TIMEOUT;
     }
 
@@ -1468,20 +1911,20 @@ int initialize_modules(void)
         }
 
         if(rc == PLCTAG_STATUS_OK) {
-            rc = job_service_init();
+            rc = rc_thread_service_init();
 
             if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_ERROR,"Job utility failed to initialize correctly!");
+                pdebug(DEBUG_ERROR,"RCThread utility failed to initialize correctly!");
             }
         }
 
-        if(rc == PLCTAG_STATUS_OK) {
-            rc = ab_init();
+        //~ if(rc == PLCTAG_STATUS_OK) {
+            //~ rc = ab_init();
 
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
-            }
-        }
+            //~ if(rc != PLCTAG_STATUS_OK) {
+                //~ pdebug(DEBUG_ERROR,"AB protocol failed to initialize correctly!");
+            //~ }
+        //~ }
 
         library_initialized = 1;
 
@@ -1509,9 +1952,9 @@ int initialize_modules(void)
 
 void teardown_modules(void)
 {
-    ab_teardown();
+    //~ ab_teardown();
 
-    job_service_teardown();
+    rc_thread_service_teardown();
 
     resource_service_teardown();
 

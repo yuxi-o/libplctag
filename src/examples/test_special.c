@@ -29,18 +29,25 @@ void test_version(void)
     tag_id tag = PLC_TAG_NULL;
     int i;
     int ver[3] = {0,};
+    int rc = PLCTAG_STATUS_OK;
 
     fprintf(stderr,"Testing version tag.\n");
 
-    tag = plc_tag_create("protocol=system&name=version&debug=4", 0);
+    tag = plc_tag_create("plc=system&name=version&debug=4", 0);
 
     if(!tag) {
         fprintf(stderr,"ERROR: Could not create tag!\n");
         return;
     }
 
-    while(plc_tag_status(tag) == PLCTAG_STATUS_PENDING) {
+    while((rc = plc_tag_status(tag)) == PLCTAG_STATUS_PENDING) {
         sleep_ms(10);
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to open version tag!");
+        plc_tag_destroy(tag);
+        return;
     }
 
     plc_tag_read(tag, 0);
@@ -60,6 +67,7 @@ void test_debug(void)
 {
     tag_id tag = PLC_TAG_NULL;
     int old_debug, new_debug;
+    int rc = PLCTAG_STATUS_OK;
 
     fprintf(stderr,"Testing debug tag.\n");
 
@@ -70,8 +78,14 @@ void test_debug(void)
         return;
     }
 
-    while(plc_tag_status(tag) == PLCTAG_STATUS_PENDING) {
+    while((rc = plc_tag_status(tag)) == PLCTAG_STATUS_PENDING) {
         sleep_ms(10);
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to open debug tag!");
+        plc_tag_destroy(tag);
+        return;
     }
 
     plc_tag_read(tag, 0);

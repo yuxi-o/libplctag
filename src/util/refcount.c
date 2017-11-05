@@ -26,15 +26,9 @@
 #include <util/hashtable.h>
 
 
-#ifndef container_of
-#define container_of(ptr, type, member) ((type *)((char *)(1 ? (ptr) : &((type *)0)->member) - offsetof(type, member)))
-#endif
-
-
-
-//~ static volatile mutex_p refcount_mutex = NULL;
-//~ static volatile hashtable_p references = NULL;
-
+//~ #ifndef container_of
+//~ #define container_of(ptr, type, member) ((type *)((char *)(1 ? (ptr) : &((type *)0)->member) - offsetof(type, member)))
+//~ #endif
 
 
 
@@ -95,7 +89,7 @@ static void cleanup_entry_destroy(cleanup_p entry);
  * Create a reference counted control for the requested data size.  Return a strong
  * reference to the data.
  */
-void *rc_alloc_impl(const char *func, int line_num, int data_size, rc_cleanup_func cleaner_func, int extra_arg_count, ...)
+void *rc_alloc_impl(const char *func, int line_num, int data_size, int extra_arg_count, rc_cleanup_func cleaner_func, ...)
 {
     refcount_p rc = NULL;
     cleanup_p cleanup = NULL;
@@ -119,7 +113,7 @@ void *rc_alloc_impl(const char *func, int line_num, int data_size, rc_cleanup_fu
     rc->line_num = line_num;
 
     /* allocate the final cleanup struct */
-    va_start(extra_args, extra_arg_count);
+    va_start(extra_args, cleaner_func);
     cleanup = cleanup_entry_create(func, line_num, cleaner_func, extra_arg_count, extra_args);
     va_end(extra_args);
 
