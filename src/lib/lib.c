@@ -279,7 +279,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     set_debug_level(attr_get_int(attribs, "debug", DEBUG_NONE));
 
     /* create the generic part of the tag. */
-    tag = rc_alloc(sizeof(*tag), tag_destroy, 0);
+    tag = rc_alloc(sizeof(*tag), tag_destroy);
     if(!tag) {
         attr_destroy(attribs);
         pdebug(DEBUG_ERROR,"Unable to create tag!");
@@ -577,23 +577,25 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
             break;
         }
 
-        tag->read_in_flight = 1;
-
-        /* set up the cache time */
-        if(tag->read_cache_duration_ms) {
-            tag->read_cache_expire_ms = time_ms() + tag->read_cache_duration_ms;
+        if(rc == PLCTAG_STATUS_PENDING) {
+            tag->read_in_flight = 1;
         }
 
         /*
          * if there is a timeout, then loop until we get
          * an error or we timeout.
          */
-        if(timeout) {
+        if(timeout && rc == PLCTAG_STATUS_PENDING) {
             int64_t start_time = time_ms();
 
             rc = wait_for_timeout(tag, timeout);
 
             pdebug(DEBUG_INFO,"elapsed time %ldms",(time_ms()-start_time));
+        }
+
+        /* set up the cache time */
+        if((rc == PLCTAG_STATUS_OK || rc == PLCTAG_STATUS_PENDING) && tag->read_cache_duration_ms) {
+            tag->read_cache_expire_ms = time_ms() + tag->read_cache_duration_ms;
         }
     } /* end of api block */
 
@@ -697,11 +699,15 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
             break;
         }
 
+        if(rc == PLCTAG_STATUS_PENDING) {
+            tag->write_in_flight = 1;
+        }
+
         /*
          * if there is a timeout, then loop until we get
          * an error or we timeout.
          */
-        if(timeout) {
+        if(timeout && rc == PLCTAG_STATUS_PENDING) {
             int64_t start_time = time_ms();
 
             rc = wait_for_timeout(tag, timeout);
@@ -1676,6 +1682,13 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
  ************************ Internal API Functions ***********************
  **********************************************************************/
 
+/*
+ * WARNING - These are not threadsafe!  Make sure they are calle with
+ * a mutex held.
+ *
+ * These are only safe as long as only one thread is accessing them.
+ */
+
 bytebuf_p tag_get_data(tag_p tag)
 {
     bytebuf_p data = NULL;
@@ -1685,10 +1698,7 @@ bytebuf_p tag_get_data(tag_p tag)
         return NULL;
     }
 
-    /* FIXME - does this really need to be mutex protected? */
-    critical_block(tag->api_mut) {
-        data = tag->data;
-    }
+    data = tag->data;
 
     return data;
 }
@@ -1704,10 +1714,8 @@ int tag_set_data(tag_p tag, bytebuf_p data)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    critical_block(tag->api_mut) {
-        old_buf = tag->data;
-        tag->data = data;
-    }
+    old_buf = tag->data;
+    tag->data = data;
 
     if(old_buf) {
         bytebuf_destroy(old_buf);
@@ -1750,9 +1758,10 @@ void tag_destroy(void *tag_arg, int arg_count, void **args)
     tag = tag_arg;
 
     if(tag) {
+        rc_dec(tag->plc);
         mutex_destroy(&tag->api_mut);
         mutex_destroy(&tag->external_mut);
-        rc_dec(tag->plc);
+        bytebuf_destroy(tag->data);
         attr_destroy(tag->attribs);
     }
 

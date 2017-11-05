@@ -106,7 +106,7 @@ void * hashtable_get(hashtable_p table, void *key, int key_len)
     void *result = NULL;
     int rc = PLCTAG_STATUS_OK;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     if(!table) {
         pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
@@ -124,7 +124,7 @@ void * hashtable_get(hashtable_p table, void *key, int key_len)
         result = entry->data;
     }
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return result;
 }
@@ -140,7 +140,7 @@ int hashtable_put(hashtable_p table, void *key, int key_len, void  *data)
     hashtable_entry_p entry;
     int rc = PLCTAG_STATUS_OK;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     if(!table) {
         pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
@@ -172,7 +172,7 @@ int hashtable_put(hashtable_p table, void *key, int key_len, void  *data)
         }
     }
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return rc;
 }
@@ -188,7 +188,7 @@ void * hashtable_remove(hashtable_p table, void *key, int key_len)
     int rc = PLCTAG_STATUS_OK;
     void * result = NULL;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     if(!table) {
         pdebug(DEBUG_WARN,"Hashtable pointer null or invalid.");
@@ -214,7 +214,7 @@ void * hashtable_remove(hashtable_p table, void *key, int key_len)
         }
     }
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return result;
 }
@@ -272,7 +272,7 @@ int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index
 {
     int rc = PLCTAG_ERR_NOT_FOUND;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     /* get the right bucket */
     *bucket_index = hash(key, key_len, table->bucket_size) % (uint32_t)table->bucket_size;
@@ -294,7 +294,7 @@ int find_entry(hashtable_p table, void *key, int key_len, uint32_t *bucket_index
         }
     }
 
-    pdebug(DEBUG_INFO,"Done.");
+    pdebug(DEBUG_SPEW,"Done.");
 
     return rc;
 }

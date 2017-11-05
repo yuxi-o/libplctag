@@ -71,7 +71,7 @@ void test_debug(void)
 
     fprintf(stderr,"Testing debug tag.\n");
 
-    tag = plc_tag_create("protocol=system&name=debug&debug=4", 0);
+    tag = plc_tag_create("plc=system&name=debug&debug=4", 0);
 
     if(!tag) {
         fprintf(stderr,"ERROR: Could not create tag!\n");
@@ -89,8 +89,14 @@ void test_debug(void)
     }
 
     plc_tag_read(tag, 0);
+    rc = plc_tag_status(tag);
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to write debug tag!");
+        plc_tag_destroy(tag);
+        return;
+    }
 
-    old_debug = plc_tag_get_int32(tag,0);
+    old_debug = plc_tag_get_int32(tag, 0);
 
     fprintf(stderr,"Current debug level is %d\n",old_debug);
 
@@ -100,7 +106,21 @@ void test_debug(void)
 
     plc_tag_write(tag, 0);
 
+    rc = plc_tag_status(tag);
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to write debug tag!");
+        plc_tag_destroy(tag);
+        return;
+    }
+
     plc_tag_read(tag, 0);
+
+    rc = plc_tag_status(tag);
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to read debug tag!");
+        plc_tag_destroy(tag);
+        return;
+    }
 
     new_debug = plc_tag_get_int32(tag,0);
 
@@ -112,7 +132,21 @@ void test_debug(void)
 
     plc_tag_write(tag, 0);
 
+    rc = plc_tag_status(tag);
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to write debug tag!");
+        plc_tag_destroy(tag);
+        return;
+    }
+
     plc_tag_read(tag, 0);
+
+    rc = plc_tag_status(tag);
+    if(rc != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Unable to read debug tag!");
+        plc_tag_destroy(tag);
+        return;
+    }
 
     new_debug = plc_tag_get_int32(tag,0);
 

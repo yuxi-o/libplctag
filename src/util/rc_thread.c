@@ -88,7 +88,7 @@ rc_thread_p rc_thread_create_impl(int arg_count, rc_thread_func func, ...)
 
     /* fill in the extra args. */
     va_start(va, func);
-    for(int i=0; i < arg_count; i++) {
+    for(int i=0; i < impl->arg_count; i++) {
         impl->args[i] = va_arg(va, void *);
     }
     va_end(va);
@@ -200,12 +200,10 @@ THREAD_FUNC(reaper_thread_handler)
 {
     (void) arg;
 
-    /* FIXME DEBUG */
-    THREAD_RETURN(0);
+    pdebug(DEBUG_INFO,"Starting.");
 
     while(!library_terminating) {
         thread_p thread = NULL;
-
 
         critical_block(rc_thread_mutex) {
             thread = vector_remove(thread_list, 0);
@@ -218,6 +216,8 @@ THREAD_FUNC(reaper_thread_handler)
 
         sleep_ms(5); /* MAGIC */
     }
+
+    pdebug(DEBUG_INFO,"Done.");
 
     THREAD_RETURN(0);
 }

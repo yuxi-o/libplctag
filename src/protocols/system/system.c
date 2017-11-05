@@ -59,6 +59,8 @@ plc_p system_plc_create(tag_p tag)
     plc_p plc = NULL;
     attr attribs = NULL;
     const char *name = NULL;
+    bytebuf_p data = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_INFO,"Starting.");
 
@@ -88,7 +90,20 @@ plc_p system_plc_create(tag_p tag)
         return NULL;
     }
 
-    //tag->creation_time = time_ms();
+    /* create a data buffer for the tag. */
+    data = bytebuf_create(12,0x10,0x3210,0x76543210,0x3210,0x7654321);
+    if(!data) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new byte buf for data!");
+        rc_dec(plc);
+        return NULL;
+    }
+
+    rc = tag_set_data(tag, data);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set data buffer in tag!");
+        rc_dec(plc);
+        return NULL;
+    }
 
     /*
      * Set the vtable up depending on the name.
@@ -141,13 +156,8 @@ int debug_read(plc_p plc, tag_p tag)
     /* check the tag data buffer. */
     data = tag_get_data(tag);
     if(!data) {
-        data = bytebuf_create(4,0x10,0x3210,0x76543210,0x3210,0x7654321);
-        if(!data) {
-            pdebug(DEBUG_ERROR,"Unable to allocate new byte buf for data!");
-            return PLCTAG_ERR_NO_MEM;
-        }
-
-        tag_set_data(tag, data); /* FIXME - should check return code. */
+        pdebug(DEBUG_WARN,"No data buffer in tag!");
+        return PLCTAG_ERR_NO_DATA;
     }
 
     /* get the debug level */
@@ -240,13 +250,8 @@ int version_read(plc_p plc, tag_p tag)
     /* check the tag data buffer. */
     data = tag_get_data(tag);
     if(!data) {
-        data = bytebuf_create(12,0x10,0x3210,0x76543210,0x3210,0x7654321);
-        if(!data) {
-            pdebug(DEBUG_ERROR,"Unable to allocate new byte buf for data!");
-            return PLCTAG_ERR_NO_MEM;
-        }
-
-        tag_set_data(tag, data); /* FIXME - should check return code. */
+        pdebug(DEBUG_WARN,"No data buffer in tag!");
+        return PLCTAG_ERR_NO_DATA;
     }
 
     rc = bytebuf_set_cursor(data, 0);
