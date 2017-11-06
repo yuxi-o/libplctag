@@ -22,23 +22,22 @@
 #include <ctype.h>
 #include <platform.h>
 #include <lib/libplctag.h>
-#include <ab/logix/plc.h>
-#include <ab/logix/packet.h>
+#include <ab/packet.h>
+#include <ab/logix.h>
 #include <util/debug.h>
-#include <util/job.h>
+#include <util/rc_thread.h>
 #include <util/resource.h>
+#include <util/vector.h>
 
 
 
 
 #define SESSION_RESOURCE_PREFIX "AB CIP Session "
 
-typedef enum {SESSION_STARTING, SESSION_OPEN_SESSION, SESSION_RUNNING} plc_state;
+typedef enum {PLC_STARTING, PLC_OPEN_SESSION, PLC_RUNNING, PLC_ERROR} plc_state;
 
 
 struct logix_plc_t {
-    struct plc_t base;
-
     char *full_path;
     char *host;
     int port;
@@ -55,39 +54,34 @@ struct logix_plc_t {
     uint32_t plc_handle;
     uint64_t plc_context;
 
-    job_p monitor;
+    rc_thread_p monitor;
 
     bytebuf_p data;
 };
 typedef struct logix_plc_t *logix_plc_p;
 
 
-struct request_t {
-    int abort_requested;
-    int read_requested;
-    int write_requested;
-    int operation_in_flight;
+typedef enum {REQUEST_NONE, REQUEST_READ, REQUEST_WRITE} request_type;
 
-    int status;
+typedef struct logix_request_t *logix_request_p;
 
-    tag_p tag;
-    bytebuf_p data;
-};
-
-typedef struct request_t *request_p;
 
 /* declarations for our v-table functions */
-static int tag_status(plc_p plc, tag_p tag);
-static int tag_abort(plc_p plc, tag_p tag);
-static int tag_read(plc_p plc, tag_p tag);
-static int tag_write(plc_p plc, tag_p tag);
+static int dispatch_function(tag_p tag, void *impl_data, tag_operation op);
+static int tag_status(void* plc, tag_p tag);
+static int tag_abort(void* plc, tag_p tag);
+static int tag_read(void* plc, tag_p tag);
+static int tag_write(void* plc, tag_p tag);
 
 
-
+static int setup_socket(logix_plc_p plc);
 static int register_plc(logix_plc_p plc);
-static job_exit_type plc_monitor(int arg_count, void **args);
+static void plc_monitor(int arg_count, void **args);
 static logix_plc_p create_plc(const char *path);
 static void plc_destroy(void *plc_arg, int arg_count, void **args);
+
+static int process_incoming_data(logix_plc_p plc);
+static int process_outgoing_requests(logix_plc_p plc);
 
 static int parse_path(const char *full_path, char **host, int *port, char **local_path);
 static char *match_host(char *p);
@@ -97,34 +91,73 @@ static char *match_local_path(char *p);
 static char *match_number(char *p);
 
 
+
+static logix_request_p request_create(tag_p tag, request_type operation);
+static void request_destroy(void *request_arg, int extra_arg_count, void **extra_args);
+static bytebuf_p request_get_data(logix_request_p request);
+static request_type request_get_type(logix_request_p request);
+static tag_p request_get_tag(logix_request_p request);
+static int request_abort(logix_request_p request);
+
+
 /***********************************************************************
  *********************** Public Functions ******************************
  **********************************************************************/
 
 
-plc_p logix_plc_create(attr attribs)
+int logix_tag_create(tag_p tag)
 {
     char *plc_name = NULL;
     logix_plc_p plc = NULL;
-    const char *path = attr_get_str(attribs,"path",NULL);
+    attr attribs = tag_get_attribs(tag);
+    const char *path = NULL;
+    bytebuf_p data = NULL;
+    int rc = PLCTAG_STATUS_OK;
+
 
     pdebug(DEBUG_INFO,"Starting");
 
-    if(!path || str_length(path)) {
-        pdebug(DEBUG_WARN,"PLC path is missing or empty!");
-        return NULL;
+    if(!attribs) {
+        pdebug(DEBUG_WARN,"Tag has no attributes!");
+        return PLCTAG_ERR_NO_DATA;
     }
 
-    plc_name = resource_make_name(SESSION_RESOURCE_PREFIX, path);
+    path =  attr_get_str(attribs,"path",NULL);
+    if(!path || str_length(path)) {
+        pdebug(DEBUG_WARN,"PLC path is missing or empty!");
+        return PLCTAG_ERR_BAD_PARAM;
+    }
+
+    /* set up the byte buffer. */
+    data = bytebuf_create(1, AB_BYTE_ORDER_INT16, AB_BYTE_ORDER_INT32, AB_BYTE_ORDER_INT64, AB_BYTE_ORDER_FLOAT32, AB_BYTE_ORDER_FLOAT64);
+    if(!data) {
+        pdebug(DEBUG_ERROR,"Unable to create byte buffer for tag data!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
+    rc = tag_set_bytebuf(tag, data);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set tag byte buffer!");
+        return rc;
+    }
+
+    rc = tag_set_impl_op_func(tag, dispatch_function);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set tag byte buffer!");
+        return rc;
+    }
+
+    /* get a reference to the PLC */
+    plc_name = str_concat(SESSION_RESOURCE_PREFIX, path);
     if(!plc_name) {
         pdebug(DEBUG_WARN,"Unable to make PLC name!");
-        return NULL;
+        return PLCTAG_ERR_NO_MEM;
     }
 
     if(str_length(plc_name) == 0) {
         pdebug(DEBUG_WARN,"PLC name is null or zero length!");
         mem_free(plc_name);
-        return NULL;
+        return PLCTAG_ERR_BAD_PARAM;
     }
 
     pdebug(DEBUG_INFO,"Starting with path %s", path);
@@ -145,228 +178,246 @@ plc_p logix_plc_create(attr attribs)
 
                 plc = resource_get(plc_name);
             } else {
-                plc->monitor = job_create(plc_monitor, 0, 1, plc);
+                plc->monitor = rc_thread_create(plc_monitor, plc);
                 if(!plc->monitor) {
-                    pdebug(DEBUG_ERROR,"Unable to create plc monitor job!");
+                    pdebug(DEBUG_ERROR,"Unable to create plc monitor thread!");
                     plc = rc_dec(plc);
+                    rc = PLCTAG_ERR_CREATE;
                 }
             }
-        } else {
-            /* create failed! */
-            pdebug(DEBUG_ERROR,"Unable to create new plc!");
         }
+    }
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"Unable to create or get PLC!");
+        rc = PLCTAG_ERR_CREATE;
     }
 
     if(plc_name) {
         mem_free(plc_name);
     }
 
-    if(plc) {
-        /* register the tag in the PLC tag store */
-
-    }
-
-    return (plc_p)plc;
+    return rc;
 }
-
-
-//~ plc_p logix_tag_create(attr attribs)
-//~ {
-    //~ logix_plc_p plc = NULL;
-    //~ int rc = PLCTAG_STATUS_OK;
-
-    //~ /* FIXME */
-    //~ (void)attribs;
-
-    //~ pdebug(DEBUG_INFO,"Starting.");
-
-    //~ /* build the new plc. */
-    //~ plc = rc_alloc(sizeof(logix_plc_t), logix_plc_destroy);
-    //~ if(!plc) {
-        //~ pdebug(DEBUG_ERROR,"Unable to allocate memory for new plc!");
-        //~ return NULL;
-    //~ }
-
-
-    //~ rc = mutex_create(&plc->mutex);
-    //~ if(!rc == PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Unable to create mutex!");
-        //~ logix_plc_destroy(plc, 0, NULL);
-        //~ return NULL;
-    //~ }
-
-    //~ plc->status = PLCTAG_STATUS_PENDING;
-    //~ plc->state = STARTING;
-
-    //~ plc->path = str_dup(attr_get_str(attribs,"path",NULL));
-    //~ plc->name = str_dup(attr_get_str(attribs,"name",NULL));
-    //~ plc->element_count = attr_get_int(attribs,"elem_count",1);
-
-    //~ /*
-     //~ * the rest of this requires synchronization.  We are creating
-     //~ * independent threads of control from this thread which could
-     //~ * modify plc state.
-     //~ */
-    //~ critical_block(plc->mutex) {
-        //~ /* create a monitor job to monitor the plc during operation. */
-        //~ plc->monitor = job_create(plc_monitor, 0, 1, plc);
-    //~ }
-
-    //~ if(!plc->monitor) {
-        //~ pdebug(DEBUG_ERROR,"Unable to start plc set up job!");
-        //~ logix_plc_destroy(plc, 0, NULL);
-        //~ break;
-    //~ }
-
-    //~ pdebug(DEBUG_INFO,"Done.");
-
-    //~ return (plc_p)plc;
-//~ }
-
-
-
-int tag_status(plc_p plc_arg, tag_p tag)
-{
-    logix_plc_p plc = (logix_plc_p)plc_arg;
-    int status = PLCTAG_STATUS_OK;
-
-    if(!plc) {
-        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
-    }
-
-    critical_block(plc->mutex) {
-        status = plc->status;
-    }
-
-    if(status != PLCTAG_STATUS_OK) {
-        return status;
-    }
-
-    /* look up tag to see if it is in some sort of operation. */
-    status = PLCTAG_STATUS_OK;
-
-    critical_block(plc->mutex) {
-        for(int i=0; i < vector_length(plc->requests); i++) {
-            request_p *request = vector_get(plc->requests, i);
-
-            if(request->tag == tag) {
-                status = request->status;
-                break;
-            }
-        }
-    }
-
-    return status;
-}
-
-
-int tag_abort(plc_p plc_arg, tag_p tag)
-{
-    logix_plc_p plc = (logix_plc_p)plc_arg;
-    int status = PLCTAG_STATUS_OK;
-
-    if(!plc) {
-        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
-    }
-
-    critical_block(plc->mutex) {
-        status = plc->status;
-    }
-
-    if(status != PLCTAG_STATUS_OK) {
-        return status;
-    }
-
-    /* look up tag to see if it is in some sort of operation. */
-    status = PLCTAG_STATUS_OK;
-
-    critical_block(plc->mutex) {
-        for(int i=0; i < vector_length(plc->requests); i++) {
-            request_p *request = vector_get(plc->requests, i);
-
-            if(request->tag == tag) {
-                request->abort_requested = 1;
-                break;
-            }
-        }
-    }
-
-    return status;
-}
-
-
-int tag_read(plc_p plc, tag_p tag)
-{
-
-}
-
-
-int tag_write(plc_p plc, tag_p tag)
-{
-
-}
-
-
 
 
 /***********************************************************************
- ************************ Support Routines *****************************
+ ************************* PLC Functions *******************************
  **********************************************************************/
 
-
-
-
-
-
-
-
-int logix_get_plc_status(logix_plc_p plc)
-{
-    pdebug(DEBUG_DETAIL,"Starting.");
-
-    if(!plc) {
-        pdebug(DEBUG_WARN,"Called with null pointer.");
-        return PLCTAG_ERR_NULL_PTR;
-    }
-
-    /*
-     * FIXME - this is not thread safe, it will probably work, but
-     * not on all platforms!
-     */
-
-     pdebug(DEBUG_DETAIL,"Done.");
-
-     return plc->status;
-}
-
-
-
-int logix_plc_queue_request(logix_plc_p plc, logix_request_p request)
+int dispatch_function(tag_p tag, void *plc_arg, tag_operation op)
 {
     int rc = PLCTAG_STATUS_OK;
 
-    if(!plc) {
-        pdebug(DEBUG_WARN,"Session pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    switch(op) {
+        case TAG_OP_ABORT:
+            rc = tag_abort(plc_arg, tag);
+            break;
 
-    if(!request) {
-        pdebug(DEBUG_WARN,"Request pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+        case TAG_OP_READ:
+            rc = tag_read(plc_arg, tag);
+            break;
 
-    if(!request->tag) {
-        pdebug(DEBUG_WARN,"Request has NULL tag pointer!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+        case TAG_OP_STATUS:
+            rc = tag_status(plc_arg, tag);
+            break;
 
-    critical_block(plc->mutex) {
-        /* put the new request at the end */
-        rc = vector_put(plc->requests, vector_length(plc->requests), request);
+        case TAG_OP_WRITE:
+            rc = tag_write(plc_arg, tag);
+            break;
+
+        default:
+            pdebug(DEBUG_WARN,"Operation %d not implemented!",op);
+            rc = PLCTAG_ERR_NOT_IMPLEMENTED;
+            break;
     }
 
     return rc;
 }
+
+
+int tag_abort(void *plc_arg, tag_p tag)
+{
+    logix_plc_p plc = (logix_plc_p)plc_arg;
+    int status = PLCTAG_STATUS_OK;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
+    }
+
+    critical_block(plc->mutex) {
+        status = plc->status;
+    }
+
+    if(status != PLCTAG_STATUS_OK) {
+        return status;
+    }
+
+    /* look up tag to see if it is in some sort of operation. */
+    status = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        for(int i=0; i < vector_length(plc->requests); i++) {
+            logix_request_p request = vector_get(plc->requests, i);
+
+            if(request_get_tag(request) == tag) {
+                request_abort(request);
+                break;
+            }
+        }
+    }
+
+    return status;
+}
+
+
+int tag_read(void *plc_arg, tag_p tag)
+{
+    logix_plc_p plc = (logix_plc_p)plc_arg;
+    int rc = PLCTAG_STATUS_OK;
+    logix_request_p req = NULL;
+    int busy = 0;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
+    }
+
+    critical_block(plc->mutex) {
+        rc = plc->status;
+    }
+
+    if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+        return rc;
+    }
+
+    /* look up tag to see if it is in some sort of operation. */
+    rc = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        for(int i=0; i < vector_length(plc->requests); i++) {
+            logix_request_p request = vector_get(plc->requests, i);
+
+            if(request_get_tag(request) == tag) {
+                busy = 1;
+                rc = PLCTAG_ERR_BUSY;
+                break;
+            }
+        }
+
+        if(!busy) {
+            req = request_create(rc_inc(tag), REQUEST_READ);
+            if(!req) {
+                pdebug(DEBUG_WARN, "Unable to create new request!");
+                rc = PLCTAG_ERR_NO_MEM;
+                break;
+            }
+
+            rc = vector_put(plc->requests, vector_length(plc->requests), req);
+        }
+    }
+
+    /* OK means we queued the request, so we are now waiting. */
+    if(rc == PLCTAG_STATUS_OK) {
+        rc = PLCTAG_STATUS_PENDING;
+    }
+
+    return rc;
+
+}
+
+
+
+
+int tag_status(void *plc_arg, tag_p tag)
+{
+    logix_plc_p plc = (logix_plc_p)plc_arg;
+    int status = PLCTAG_STATUS_OK;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
+    }
+
+    critical_block(plc->mutex) {
+        status = plc->status;
+    }
+
+    if(status != PLCTAG_STATUS_OK) {
+        return status;
+    }
+
+    /* look up tag to see if it is in some sort of operation. */
+    status = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        for(int i=0; i < vector_length(plc->requests); i++) {
+            logix_request_p request = vector_get(plc->requests, i);
+
+            if(request_get_tag(request) == tag) {
+                status = PLCTAG_STATUS_PENDING;
+                break;
+            }
+        }
+    }
+
+    return status;
+}
+
+
+int tag_write(void *plc_arg, tag_p tag)
+{
+    logix_plc_p plc = (logix_plc_p)plc_arg;
+    int rc = PLCTAG_STATUS_OK;
+    logix_request_p req = NULL;
+    int busy = 0;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN,"PLC pointer is NULL.");
+    }
+
+    critical_block(plc->mutex) {
+        rc = plc->status;
+    }
+
+    if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+        return rc;
+    }
+
+    /* look up tag to see if it is in some sort of operation. */
+    rc = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        for(int i=0; i < vector_length(plc->requests); i++) {
+            logix_request_p request = vector_get(plc->requests, i);
+
+            if(request_get_tag(request) == tag) {
+                busy = 1;
+                rc = PLCTAG_ERR_BUSY;
+                break;
+            }
+        }
+
+        if(!busy) {
+            req = request_create(rc_inc(tag), REQUEST_WRITE);
+            if(!req) {
+                pdebug(DEBUG_WARN, "Unable to create new request!");
+                rc = PLCTAG_ERR_NO_MEM;
+                break;
+            }
+
+            rc = vector_put(plc->requests, vector_length(plc->requests), req);
+        }
+    }
+
+    /* OK means we queued the request, so we are now waiting. */
+    if(rc == PLCTAG_STATUS_OK) {
+        rc = PLCTAG_STATUS_PENDING;
+    }
+
+    return rc;
+}
+
+
+
 
 
 
@@ -441,51 +492,51 @@ void plc_destroy(void *plc_arg, int arg_count, void **args)
 
 
 
-job_exit_type plc_monitor(int arg_count, void **args)
+void plc_monitor(int arg_count, void **args)
 {
     logix_plc_p plc;
     int rc = PLCTAG_STATUS_OK;
 
     if(!args) {
         pdebug(DEBUG_WARN,"No args passed!");
-        return JOB_DONE;
+        return;
     }
 
     if(arg_count != 1) {
         pdebug(DEBUG_WARN,"Arg count should be 1 and is %d", arg_count);
-        return JOB_DONE;
+        return;
     }
 
     plc = args[0];
     if(!plc) {
         pdebug(DEBUG_WARN,"Session argument is NULL!");
-        return JOB_DONE;
+        return;
+    }
+
+    /* loop until we are aborted. */
+    while(!rc_thread_check_abort()) {
+
     }
 
     switch(plc->state) {
-        case SESSION_STARTING:
+        case PLC_STARTING:
             /* set up the socket */
             pdebug(DEBUG_DETAIL,"Setting up socket.");
 
-            rc = socket_create(&plc->sock);
+            rc = setup_socket(plc);
             if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to create socket!");
-                return JOB_DONE;
-            }
+                pdebug(DEBUG_WARN,"Unable to connect socket to PLC!");
+                plc->status = rc;
 
-            /* FIXME - this blocks! */
-            rc = socket_connect_tcp(plc->sock, plc->host, plc->port);
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to connect to PLC!");
-                return JOB_DONE;
+                plc->state = PLC_ERROR;
+            } else {
+                /* set up a session to the PLC next. */
+                plc->state = PLC_OPEN_SESSION;
             }
-
-            /* set up plc next. */
-            plc->state = SESSION_OPEN_SESSION;
 
             break;
 
-        case SESSION_OPEN_SESSION:
+        case PLC_OPEN_SESSION:
             /* register plc */
             pdebug(DEBUG_DETAIL,"Registering plc.");
 
@@ -493,36 +544,90 @@ job_exit_type plc_monitor(int arg_count, void **args)
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Unable to register plc!");
                 plc->status = rc;
-                return JOB_DONE;
-            }
 
-            plc->state = SESSION_RUNNING;
+                plc->state = PLC_ERROR;
+            } else {
+                plc->state = PLC_RUNNING;
+            }
 
             break;
 
-        case SESSION_RUNNING:
+        case PLC_RUNNING:
             /* this is synchronous for now. */
-            rc = process_request(plc);
+            rc = process_incoming_data(plc);
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Unable to process incoming data!");
+                plc->status = rc;
+
+                plc->state = PLC_ERROR;
+                break;
+            }
+
+            rc = process_outgoing_requests(plc);
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Unable to process request!");
                 plc->status = rc;
-                return JOB_DONE;
+
+                plc->state = PLC_ERROR;
+                break;
+            }
+
+            break;
+
+        case PLC_ERROR: {
+                logix_request_p request = NULL;
+                /* just eat the requests as they come in and do not do anything. */
+                critical_block(plc->mutex) {
+                    request = vector_remove(plc->requests,0);
+                }
+
+                if(request) {
+                    rc_dec(request);
+                }
             }
 
             break;
     }
 
-    return JOB_RERUN;
+    return;
 }
 
 
+int setup_socket(logix_plc_p plc)
+{
+    int rc = PLCTAG_STATUS_OK;
+
+    rc = socket_create(&plc->sock);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to create socket!");
+        return rc;
+    }
+
+    /* FIXME - this blocks! */
+    rc = socket_connect_tcp(plc->sock, plc->host, plc->port);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to connect to PLC!");
+        return rc;
+    }
+
+    return rc;
+}
+
+
+int process_incoming_data(logix_plc_p plc)
+{
+
+    /* FIXME */
+
+    return PLCTAG_STATUS_OK;
+}
 
 /*
  * Check to see if there is a pending request.  If there is, then
  * try to process it.
  */
 
-int process_request(logix_plc_p plc)
+int process_outgoing_requests(logix_plc_p plc)
 {
     int rc = PLCTAG_STATUS_OK;
     logix_request_p request;
@@ -534,7 +639,7 @@ int process_request(logix_plc_p plc)
 
     if(request) {
         /* there is something to do. */
-        if(request->abort_requested) {
+        if(request_get_abort(request)) {
             /* clean up the request. */
             pdebug(DEBUG_DETAIL,"Request not started and abort requested.");
 
@@ -586,7 +691,7 @@ int register_plc(logix_plc_p plc)
     bytebuf_reset(plc->data);
 
     /* request the specific EIP/CIP version */
-    rc = marshal_register_plc(plc->data,(uint16_t)AB_EIP_VERSION, (uint16_t)0);
+    rc = marshal_register_session(plc->data,(uint16_t)AB_EIP_VERSION, (uint16_t)0);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to marshall register plc packet!");
         return rc;
@@ -672,7 +777,7 @@ logix_plc_p create_plc(const char *path)
     plc->resource_count = 1; /* MAGIC */
     plc->status = PLCTAG_STATUS_PENDING;
     plc->sock = NULL;
-    plc->state = SESSION_STARTING;
+    plc->state = PLC_STARTING;
     plc->port = AB_EIP_DEFAULT_PORT;
 
     rc = parse_path(path, &plc->host, &plc->port, &plc->path);
@@ -950,3 +1055,110 @@ char *match_number(char *p)
 
     return q;
 }
+
+
+/***********************************************************************
+ ************************** Request Functions **************************
+ **********************************************************************/
+
+struct logix_request_t {
+    int abort_requested;
+    request_type operation;
+    int operation_in_flight;
+
+    int status;
+
+    tag_p tag;
+    bytebuf_p data;
+};
+
+
+
+
+ logix_request_p request_create(tag_p tag, request_type operation)
+{
+    logix_request_p req;
+
+    req = rc_alloc(sizeof(struct logix_request_t), request_destroy);
+    if(!req) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new request!");
+        return NULL;
+    }
+
+    req->data = bytebuf_create(1, AB_BYTE_ORDER_INT16, AB_BYTE_ORDER_INT32, AB_BYTE_ORDER_INT64, AB_BYTE_ORDER_FLOAT32, AB_BYTE_ORDER_FLOAT64);
+    if(!req->data) {
+        pdebug(DEBUG_ERROR,"Unable to create new request data buffer!");
+        rc_dec(req);
+        return NULL;
+    }
+
+    return req;
+}
+
+
+void request_destroy(void *request_arg, int extra_arg_count, void **extra_args)
+{
+    logix_request_p request = request_arg;
+
+    (void)extra_arg_count;
+    (void)extra_args;
+
+    if(!request) {
+        pdebug(DEBUG_WARN,"Request pointer is NULL!");
+        return;
+    }
+
+    bytebuf_destroy(request->data);
+
+    rc_dec(request->tag);
+
+    return;
+}
+
+
+bytebuf_p request_get_data(logix_request_p request)
+{
+    if(!request) {
+        pdebug(DEBUG_WARN,"NULL request passed!");
+        return NULL;
+    }
+
+    return request->data;
+}
+
+
+tag_operation request_get_type(logix_request_p request)
+{
+    if(!request) {
+        pdebug(DEBUG_WARN,"NULL request passed!");
+        return REQUEST_NONE;
+    }
+
+    return request->operation;
+}
+
+
+tag_p request_get_tag(logix_request_p request)
+{
+    if(!request) {
+        pdebug(DEBUG_WARN,"NULL request passed!");
+        return NULL;
+    }
+
+    return request->tag;
+}
+
+
+int request_abort(logix_request_p request)
+{
+    if(!request) {
+        pdebug(DEBUG_WARN,"NULL request passed!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    request->abort_requested = 1;
+
+    return PLCTAG_STATUS_OK;
+}
+
+

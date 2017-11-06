@@ -24,11 +24,6 @@
 #include <stdint.h>
 #include <util/bytebuf.h>
 
-extern int byte_order_8[1];
-extern int byte_order_16[2];
-extern int byte_order_32[4];
-extern int byte_order_64[8];
-
 #define AB_EIP_VERSION ((uint16_t)0x0001)
 
 /* main EIP commands */
@@ -42,6 +37,12 @@ extern int byte_order_64[8];
 
 /* status we care about */
 #define AB_EIP_OK   (0)
+
+#define AB_BYTE_ORDER_INT16 (0x10)
+#define AB_BYTE_ORDER_INT32 (0x3210)
+#define AB_BYTE_ORDER_INT64 (0x76543210)
+#define AB_BYTE_ORDER_FLOAT32 (0x3210)
+#define AB_BYTE_ORDER_FLOAT64 (0x76543210)
 
 
 

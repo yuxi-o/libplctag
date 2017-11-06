@@ -26,6 +26,6 @@
 #include <platform.h>
 #include <lib/lib.h>
 
-extern plc_p system_plc_create(tag_p tag);
+extern int system_tag_create(tag_p tag);
 
 #endif

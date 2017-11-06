@@ -27,36 +27,22 @@
 #include <lib/libplctag.h>
 
 
-#define MAX_SYSTEM_TAG_SIZE (30)
+static int debug_op_dispatch(tag_p tag, void *plc_arg, tag_operation op);
+static int debug_abort(void* plc, tag_p tag);
+static int debug_read(void* plc, tag_p tag);
+static int debug_status(void* plc, tag_p tag);
+static int debug_write(void* plc, tag_p tag);
 
-struct system_tag_t {
-    struct plc_t base_plc;
-
-    int64_t creation_time;
-};
-
-typedef struct system_tag_t *system_tag_p;
-
-
-
-static void plc_destroy(void *tag_arg, int arg_count, void **args);
-
-
-static int debug_abort(plc_p plc, tag_p tag);
-static int debug_read(plc_p plc, tag_p tag);
-static int debug_status(plc_p plc, tag_p tag);
-static int debug_write(plc_p plc, tag_p tag);
-
-static int version_abort(plc_p plc, tag_p tag);
-static int version_read(plc_p plc, tag_p tag);
-static int version_status(plc_p plc, tag_p tag);
-static int version_write(plc_p plc, tag_p tag);
+static int version_op_dispatch(tag_p tag, void *plc_arg, tag_operation op);
+static int version_abort(void* plc, tag_p tag);
+static int version_read(void* plc, tag_p tag);
+static int version_status(void* plc, tag_p tag);
+static int version_write(void* plc, tag_p tag);
 
 
 
-plc_p system_plc_create(tag_p tag)
+int system_tag_create(tag_p tag)
 {
-    plc_p plc = NULL;
     attr attribs = NULL;
     const char *name = NULL;
     bytebuf_p data = NULL;
@@ -67,66 +53,58 @@ plc_p system_plc_create(tag_p tag)
     attribs = tag_get_attribs(tag);
     if(!attribs) {
         pdebug(DEBUG_WARN,"Tag passed with NULL attributes!");
-        return NULL;
+        return PLCTAG_ERR_NO_DATA;
     }
 
     /* check the name, if none given, punt. */
     name = attr_get_str(attribs,"name",NULL);
     if(!name || str_length(name) < 1) {
         pdebug(DEBUG_ERROR, "System tag name is empty or missing!");
-        return NULL;
+        return PLCTAG_ERR_BAD_PARAM;
     }
 
     pdebug(DEBUG_DETAIL,"Creating special tag %s", name);
-
-    /*
-     * allocate memory for the new PLC.  Do this first so that
-     * we have a vehicle for returning status.
-     */
-
-    plc = rc_alloc(sizeof(struct plc_t), plc_destroy);
-    if(!plc) {
-        pdebug(DEBUG_ERROR,"Unable to allocate memory for system plc!");
-        return NULL;
-    }
 
     /* create a data buffer for the tag. */
     data = bytebuf_create(12,0x10,0x3210,0x76543210,0x3210,0x7654321);
     if(!data) {
         pdebug(DEBUG_ERROR,"Unable to allocate new byte buf for data!");
-        rc_dec(plc);
-        return NULL;
+        return PLCTAG_ERR_NO_MEM;
     }
 
-    rc = tag_set_data(tag, data);
+    rc = tag_set_bytebuf(tag, data);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set data buffer in tag!");
-        rc_dec(plc);
-        return NULL;
+        return PLCTAG_ERR_CREATE;
     }
 
     /*
-     * Set the vtable up depending on the name.
+     * Set the operation dispatcher up depending on the name.
      */
     if(str_cmp_i(name,"debug") == 0) {
-        plc->tag_abort = debug_abort;
-        plc->tag_read = debug_read;
-        plc->tag_status = debug_status;
-        plc->tag_write = debug_write;
+        rc = tag_set_impl_op_func(tag, debug_op_dispatch);
     } else if(str_cmp_i(name,"version") == 0) {
-        plc->tag_abort = version_abort;
-        plc->tag_read = version_read;
-        plc->tag_status = version_status;
-        plc->tag_write = version_write;
+        rc = tag_set_impl_op_func(tag, version_op_dispatch);
     } else {
         pdebug(DEBUG_WARN,"Unknown tag %s!",name);
-        rc_dec(plc);
-        return NULL;
+        return PLCTAG_ERR_UNSUPPORTED;
+    }
+
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set implementation operation function in tag!");
+        return PLCTAG_ERR_CREATE;
+    }
+
+    rc = tag_set_impl_data(tag, NULL);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set implementation data in tag!");
+        return PLCTAG_ERR_CREATE;
     }
 
     pdebug(DEBUG_INFO,"Done");
 
-    return plc;
+    return rc;
 }
 
 
@@ -136,7 +114,40 @@ plc_p system_plc_create(tag_p tag)
  ************************** Debug Functions ****************************
  **********************************************************************/
 
-int debug_abort(plc_p plc, tag_p tag)
+
+int debug_op_dispatch(tag_p tag, void *plc_arg, tag_operation op)
+{
+    int rc = PLCTAG_STATUS_OK;
+
+    switch(op) {
+        case TAG_OP_ABORT:
+            rc = debug_abort(plc_arg, tag);
+            break;
+
+        case TAG_OP_READ:
+            rc = debug_read(plc_arg, tag);
+            break;
+
+        case TAG_OP_STATUS:
+            rc = debug_status(plc_arg, tag);
+            break;
+
+        case TAG_OP_WRITE:
+            rc = debug_write(plc_arg, tag);
+            break;
+
+        default:
+            pdebug(DEBUG_WARN,"Operation %d not implemented!",op);
+            rc = PLCTAG_ERR_NOT_IMPLEMENTED;
+            break;
+    }
+
+    return rc;
+}
+
+
+
+int debug_abort(void* plc, tag_p tag)
 {
     (void)plc;
     (void)tag;
@@ -145,7 +156,7 @@ int debug_abort(plc_p plc, tag_p tag)
 }
 
 
-int debug_read(plc_p plc, tag_p tag)
+int debug_read(void* plc, tag_p tag)
 {
     int rc;
     int32_t debug_level;
@@ -154,7 +165,7 @@ int debug_read(plc_p plc, tag_p tag)
     (void)plc;
 
     /* check the tag data buffer. */
-    data = tag_get_data(tag);
+    data = tag_get_bytebuf(tag);
     if(!data) {
         pdebug(DEBUG_WARN,"No data buffer in tag!");
         return PLCTAG_ERR_NO_DATA;
@@ -182,7 +193,7 @@ int debug_read(plc_p plc, tag_p tag)
 }
 
 
-int debug_status(plc_p plc, tag_p tag)
+int debug_status(void* plc, tag_p tag)
 {
     (void)plc;
     (void)tag;
@@ -191,7 +202,7 @@ int debug_status(plc_p plc, tag_p tag)
 }
 
 
-int debug_write(plc_p plc, tag_p tag)
+int debug_write(void* plc, tag_p tag)
 {
     int rc;
     int32_t debug_level;
@@ -199,7 +210,7 @@ int debug_write(plc_p plc, tag_p tag)
 
     (void)plc;
 
-    data = tag_get_data(tag);
+    data = tag_get_bytebuf(tag);
     if(!data) {
         pdebug(DEBUG_WARN,"Tag has no data!");
         return PLCTAG_ERR_NO_DATA;
@@ -231,7 +242,39 @@ int debug_write(plc_p plc, tag_p tag)
  ************************* Version Functions ***************************
  **********************************************************************/
 
-int version_abort(plc_p plc, tag_p tag)
+int version_op_dispatch(tag_p tag, void *plc_arg, tag_operation op)
+{
+    int rc = PLCTAG_STATUS_OK;
+
+    switch(op) {
+        case TAG_OP_ABORT:
+            rc = version_abort(plc_arg, tag);
+            break;
+
+        case TAG_OP_READ:
+            rc = version_read(plc_arg, tag);
+            break;
+
+        case TAG_OP_STATUS:
+            rc = version_status(plc_arg, tag);
+            break;
+
+        case TAG_OP_WRITE:
+            rc = version_write(plc_arg, tag);
+            break;
+
+        default:
+            pdebug(DEBUG_WARN,"Operation %d not implemented!",op);
+            rc = PLCTAG_ERR_NOT_IMPLEMENTED;
+            break;
+    }
+
+    return rc;
+}
+
+
+
+int version_abort(void* plc, tag_p tag)
 {
     (void)plc;
     (void)tag;
@@ -240,7 +283,7 @@ int version_abort(plc_p plc, tag_p tag)
 }
 
 
-int version_read(plc_p plc, tag_p tag)
+int version_read(void* plc, tag_p tag)
 {
     int rc;
     bytebuf_p data;
@@ -248,7 +291,7 @@ int version_read(plc_p plc, tag_p tag)
     (void)plc;
 
     /* check the tag data buffer. */
-    data = tag_get_data(tag);
+    data = tag_get_bytebuf(tag);
     if(!data) {
         pdebug(DEBUG_WARN,"No data buffer in tag!");
         return PLCTAG_ERR_NO_DATA;
@@ -273,7 +316,7 @@ int version_read(plc_p plc, tag_p tag)
 }
 
 
-int version_status(plc_p plc, tag_p tag)
+int version_status(void* plc, tag_p tag)
 {
     (void)plc;
     (void)tag;
@@ -282,7 +325,7 @@ int version_status(plc_p plc, tag_p tag)
 }
 
 
-int version_write(plc_p plc, tag_p tag)
+int version_write(void* plc, tag_p tag)
 {
     (void)plc;
     (void)tag;
@@ -290,18 +333,5 @@ int version_write(plc_p plc, tag_p tag)
     return PLCTAG_ERR_NOT_IMPLEMENTED;
 }
 
-
-/***********************************************************************
- ************************** Helper Functions ***************************
- **********************************************************************/
-
-void plc_destroy(void *tag_arg, int arg_count, void **args)
-{
-    (void)tag_arg;
-    (void)arg_count;
-    (void)args;
-
-    /* nothing to do.   rc_dec will clean up the memory. */
-}
 
 

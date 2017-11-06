@@ -25,13 +25,21 @@
 #include <util/hashtable.h>
 #include <util/refcount.h>
 #include <ab/ab.h>
-#include <ab/logix/logix.h>
+#include <ab/logix.h>
 
 
 
-impl_plc_p ab_plc_create(attr attribs)
+plc_p ab_plc_create(tag)
 {
-    const char *plc = attr_get_str(attribs,"plc", attr_get_str(attribs, "cpu", "NONE"));
+    attr attribs = tag_get_attribs(tag);
+    const char *plc = NULL;
+
+    if(!attribs) {
+        pdebug(DEBUG_WARN,"Tag has no attributes!");
+        return NULL;
+    }
+
+    plc = attr_get_str(attribs,"plc", attr_get_str(attribs, "cpu", "NONE"));
 
     if(str_cmp_i(plc,"lgx") == 0 || str_cmp_i(plc,"logix") == 0 || str_cmp_i(plc,"controllogix") == 0 || str_cmp_i(plc,"contrologix") == 0 || str_cmp_i(plc,"compactlogix") == 0) {
         return logix_tag_create(attribs);

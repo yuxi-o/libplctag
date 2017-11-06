@@ -354,6 +354,47 @@ extern char **str_split(const char *str, const char *sep)
 
 
 
+char *str_concat_impl(int num_args, ...)
+{
+    va_list arg_list;
+    int total_length = 0;
+    char *result = NULL;
+    char *tmp = NULL;
+
+    /* first loop to find the length */
+    va_start(arg_list, num_args);
+    for(int i=0; i < num_args; i++) {
+        tmp = va_arg(arg_list, char *);
+        if(tmp) {
+            total_length += str_length(tmp);
+        }
+    }
+    va_end(arg_list);
+
+    /* make a buffer big enough */
+    total_length += 1;
+
+    result = mem_alloc(total_length);
+    if(!result) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new string buffer!");
+        return NULL;
+    }
+
+    /* loop to copy the strings */
+    result[0] = 0;
+    va_start(arg_list, num_args);
+    for(int i=0; i < num_args; i++) {
+        tmp = va_arg(arg_list, char *);
+        if(tmp) {
+            int len = str_length(result);
+            str_copy(&result[len], total_length - len, tmp);
+        }
+    }
+    va_end(arg_list);
+
+    return result;
+}
+
 
 
 

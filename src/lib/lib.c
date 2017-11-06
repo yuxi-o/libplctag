@@ -33,9 +33,8 @@
 #include <util/hashtable.h>
 #include <util/rc_thread.h>
 #include <util/resource.h>
-//~ #include <util/job.h>
 #include <system/system.h>
-//~ #include <ab/ab.h>
+#include <ab/logix.h>
 
 
 
@@ -63,7 +62,11 @@ struct tag_t {
     int64_t read_cache_expire_ms;
     int64_t read_cache_duration_ms;
 
-    plc_p plc;
+    /* implementation specific data and entry function */
+    void *impl_data; /* MUST be ref counted! */
+    impl_operation_func op_func;
+
+    /* a place to store the data */
     bytebuf_p data;
 };
 
@@ -324,16 +327,16 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
     plc_type = attr_get_str(attribs, "plc", "NONE");
     if(str_cmp_i(plc_type,"logix") == 0) {
         /* Allen-Bradley ControlLogix or CompactLogix PLC */
-        //tag->impl_plc = logix_plc_create(tag);
+        rc = logix_tag_create(tag);
     } else if(str_cmp_i(plc_type, "system") == 0) {
-        tag->plc = system_plc_create(tag);
+        rc = system_tag_create(tag);
     } else {
         pdebug(DEBUG_WARN,"Unsupported PLC type %s!", plc_type);
         rc_dec(tag);
         return PLCTAG_ERR_BAD_PARAM;
     }
 
-    if(!tag->plc) {
+    if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR,"Unable to create or find PLC %s!",plc_type);
         rc_dec(tag);
         return PLCTAG_ERR_CREATE;
@@ -468,7 +471,7 @@ LIB_EXPORT int plc_tag_abort(tag_id id)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->plc->tag_abort(tag->plc, tag);
+        rc = tag->op_func(tag, tag->impl_data, TAG_OP_ABORT);
     }
 
     rc_dec(tag);
@@ -516,6 +519,11 @@ LIB_EXPORT int plc_tag_destroy(tag_id id)
      */
     critical_block(global_library_mutex) {
         tag = hashtable_remove(tags, &id, sizeof(id));
+    }
+
+    /* abort any operations in flight. We need to call the implementation directly. */
+    if(tag) {
+        rc = tag->op_func(tag, tag->impl_data, TAG_OP_ABORT);
     }
 
     /* now we are safe to decrement the ref count. */
@@ -570,7 +578,7 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
         }
 
         /* the protocol implementation does not do the timeout. */
-        rc = tag->plc->tag_read(tag->plc, tag);
+        rc = tag->op_func(tag, tag->impl_data, TAG_OP_READ);
 
         /* if error, return now */
         if(rc != PLCTAG_STATUS_PENDING && rc != PLCTAG_STATUS_OK) {
@@ -636,7 +644,7 @@ LIB_EXPORT int plc_tag_status(tag_id id)
     }
 
     critical_block(tag->api_mut) {
-        rc = tag->plc->tag_status(tag->plc, tag);
+        rc = tag->op_func(tag, tag->impl_data, TAG_OP_STATUS);
 
         if(rc == PLCTAG_STATUS_OK) {
             tag->create_in_flight = 0;
@@ -691,7 +699,7 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
         }
 
         /* the protocol implementation does not do the timeout. */
-        rc = tag->plc->tag_write(tag->plc, tag);
+        rc = tag->op_func(tag, tag->impl_data, TAG_OP_WRITE);
 
         /* if error, return now */
         if(rc != PLCTAG_STATUS_PENDING && rc != PLCTAG_STATUS_OK) {
@@ -745,7 +753,7 @@ LIB_EXPORT int plc_tag_get_size(tag_id id)
 
     critical_block(tag->api_mut) {
         /* some operations can change the tag size */
-        status = tag->plc->tag_status(tag->plc, tag);
+        status = tag->op_func(tag, tag->impl_data, TAG_OP_STATUS);
         if(status != PLCTAG_STATUS_OK) {
             result = status;
             break;
@@ -1689,7 +1697,9 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
  * These are only safe as long as only one thread is accessing them.
  */
 
-bytebuf_p tag_get_data(tag_p tag)
+
+
+bytebuf_p tag_get_bytebuf(tag_p tag)
 {
     bytebuf_p data = NULL;
 
@@ -1705,7 +1715,7 @@ bytebuf_p tag_get_data(tag_p tag)
 
 
 
-int tag_set_data(tag_p tag, bytebuf_p data)
+int tag_set_bytebuf(tag_p tag, bytebuf_p data)
 {
     bytebuf_p old_buf = NULL;
 
@@ -1723,6 +1733,33 @@ int tag_set_data(tag_p tag, bytebuf_p data)
 
     return PLCTAG_STATUS_OK;
 }
+
+
+int tag_set_impl_data(tag_p tag, void *impl_data)
+{
+    if(!tag) {
+        pdebug(DEBUG_WARN,"Called with NULL tag pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag->impl_data = impl_data;
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+int tag_set_impl_op_func(tag_p tag, impl_operation_func op_func)
+{
+    if(!tag) {
+        pdebug(DEBUG_WARN,"Called with NULL tag pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag->op_func = op_func;
+
+    return PLCTAG_STATUS_OK;
+}
+
 
 
 attr tag_get_attribs(tag_p tag)
@@ -1758,7 +1795,7 @@ void tag_destroy(void *tag_arg, int arg_count, void **args)
     tag = tag_arg;
 
     if(tag) {
-        rc_dec(tag->plc);
+        rc_dec(tag->impl_data);
         mutex_destroy(&tag->api_mut);
         mutex_destroy(&tag->external_mut);
         bytebuf_destroy(tag->data);
@@ -1815,10 +1852,10 @@ int insert_tag(tag_p tag)
 int wait_for_timeout(tag_p tag, int timeout)
 {
     int64_t timeout_time = timeout + time_ms();
-    int rc = tag->plc->tag_status(tag->plc, tag);
+    int rc = tag->op_func(tag, tag->impl_data, TAG_OP_STATUS);
 
     while(rc == PLCTAG_STATUS_PENDING && timeout_time > time_ms()) {
-        rc = tag->plc->tag_status(tag->plc, tag);
+        rc = tag->op_func(tag, tag->impl_data, TAG_OP_STATUS);
 
         /*
          * terminate early and do not wait again if the

@@ -26,7 +26,7 @@
 #include <util/attr.h>
 
 
-extern plc_p logix_plc_create(tag_p tag, attr attribs);
+extern int logix_tag_create(tag_p tag);
 
 
 #endif
