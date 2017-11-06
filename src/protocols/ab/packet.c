@@ -252,7 +252,11 @@ int send_eip_packet(sock_p sock, uint16_t command, uint32_t session_handle, uint
                 bytebuf_set_cursor(payload, offset);
             }
         }
-    } while(rc >= 0 && offset < bytebuf_get_size(payload));
+    } while(!rc_thread_check_abort() && rc >= 0 && offset < bytebuf_get_size(payload));
+
+    if(rc_thread_check_abort()) {
+        rc = PLCTAG_ERR_ABORT;
+    }
 
     if(rc > 0) {
         rc = PLCTAG_STATUS_OK;

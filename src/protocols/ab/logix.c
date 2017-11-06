@@ -515,79 +515,70 @@ void plc_monitor(int arg_count, void **args)
 
     /* loop until we are aborted. */
     while(!rc_thread_check_abort()) {
+        switch(plc->state) {
+            case PLC_STARTING:
+                /* set up the socket */
+                pdebug(DEBUG_DETAIL,"Setting up socket.");
 
-    }
+                rc = setup_socket(plc);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to connect socket to PLC!");
+                    plc->status = rc;
 
-    switch(plc->state) {
-        case PLC_STARTING:
-            /* set up the socket */
-            pdebug(DEBUG_DETAIL,"Setting up socket.");
-
-            rc = setup_socket(plc);
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to connect socket to PLC!");
-                plc->status = rc;
-
-                plc->state = PLC_ERROR;
-            } else {
-                /* set up a session to the PLC next. */
-                plc->state = PLC_OPEN_SESSION;
-            }
-
-            break;
-
-        case PLC_OPEN_SESSION:
-            /* register plc */
-            pdebug(DEBUG_DETAIL,"Registering plc.");
-
-            rc = register_plc(plc);
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to register plc!");
-                plc->status = rc;
-
-                plc->state = PLC_ERROR;
-            } else {
-                plc->state = PLC_RUNNING;
-            }
-
-            break;
-
-        case PLC_RUNNING:
-            /* this is synchronous for now. */
-            rc = process_incoming_data(plc);
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to process incoming data!");
-                plc->status = rc;
-
-                plc->state = PLC_ERROR;
-                break;
-            }
-
-            rc = process_outgoing_requests(plc);
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_WARN,"Unable to process request!");
-                plc->status = rc;
-
-                plc->state = PLC_ERROR;
-                break;
-            }
-
-            break;
-
-        case PLC_ERROR: {
-                logix_request_p request = NULL;
-                /* just eat the requests as they come in and do not do anything. */
-                critical_block(plc->mutex) {
-                    request = vector_remove(plc->requests,0);
+                    plc->state = PLC_ERROR;
+                } else {
+                    /* set up a session to the PLC next. */
+                    plc->state = PLC_OPEN_SESSION;
                 }
 
-                if(request) {
-                    rc_dec(request);
-                }
-            }
+                break;
 
-            break;
+            case PLC_OPEN_SESSION:
+                /* register plc */
+                pdebug(DEBUG_DETAIL,"Registering plc.");
+
+                rc = register_plc(plc);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to register plc!");
+                    plc->status = rc;
+
+                    plc->state = PLC_ERROR;
+                } else {
+                    plc->state = PLC_RUNNING;
+                }
+
+                break;
+
+            case PLC_RUNNING:
+                /* this is synchronous for now. */
+                rc = process_request(plc);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to process incoming data!");
+                    plc->status = rc;
+
+                    plc->state = PLC_ERROR;
+                    break;
+                }
+                break;
+
+            case PLC_ERROR: {
+                    logix_request_p request = NULL;
+                    /* just eat the requests as they come in and do not do anything. */
+                    critical_block(plc->mutex) {
+                        request = vector_remove(plc->requests,0);
+                    }
+
+                    if(request) {
+                        rc_dec(request);
+                    }
+                }
+
+                break;
+        }
+
+        sleep_ms(1);
     }
+
 
     return;
 }
@@ -614,10 +605,77 @@ int setup_socket(logix_plc_p plc)
 }
 
 
-int process_incoming_data(logix_plc_p plc)
+int process_request(logix_plc_p plc)
 {
+    logix_request_p request = NULL;
+    int rc = PLCTAG_STATUS_OK;
 
-    /* FIXME */
+    /* get a request from the queue. */
+    critical_block(plc->mutex) {
+        request = vector_remove(plc->requests, 0);
+    }
+
+    if(request) {
+        tag_p tag = request_get_tag(request);
+        attr attribs = tag_get_attribs(tag);
+        const char *name = attr_get_str(attribs, "name", NULL);
+        bytebuf_p buf = request_get_data(request);
+        tag_operation op = request_get_type(request);
+        uint16_t command;
+        uint16_t length;
+        uint32_t session_handle;
+        uint32_t status,
+        uint64_t sender_context;
+        uint32_t options;
+
+        /* determine how to encode the packet. */
+        switch(op) {
+            case REQUEST_READ:
+                rc = marshal_cip_read(buf, name);
+                break;
+
+            case REQUEST_WRITE:
+                rc = marshal_cip_write(buf, name, tag_get_bytebuf(tag));
+                break;
+
+            default:
+                pdebug(DEBUG_WARN,"Unsupported operation (%d)!", op);
+                rc = PLCTAG_ERR_UNSUPPORTED;
+                break;
+        }
+
+        if(rc != PLCTAG_STATUS_OK) {
+            return rc;
+        }
+
+        rc = marshal_cip_cfp_unconnected(buf, plc->local_path);
+        if(rc != PLCTAG_STATUS_OK) {
+            return rc;
+        }
+
+        rc = send_eip_packet(plc->sock, AB_EIP_UNCONNECTED_SEND, plc->session_handle, plc->sender_context, buf);
+        if(rc != PLCTAG_STATUS_OK) {
+            return rc;
+        }
+
+        /* get the response. */
+        rc = bytebuf_reset(buf);
+        if(rc != PLCTAG_STATUS_OK) {
+            return rc;
+        }
+
+        rc = receive_eip_packet(plc->sock, buf);
+        if(rc != PLCTAG_STATUS_OK) {
+            return rc;
+        }
+
+        rc = unmarshal_eip_header(buf, &command, &length, &session_handle, &status, &sender_context, &options);
+        if(rc != PLCTAG_STATUS_OK) {
+            return rc;
+        }
+
+
+    }
 
     return PLCTAG_STATUS_OK;
 }
