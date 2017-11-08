@@ -21,10 +21,10 @@
 #ifndef __AB_PROTOCOL_ERROR_CODES_H__
 #define __AB_PROTOCOL_ERROR_CODES_H__ 1
 
-#define AB_ERROR_STR_LONG	(0)
+#define AB_ERROR_STR_LONG   (0)
 #define AB_ERROR_STR_SHORT  (1)
 
-extern const char *decode_cip_error(uint8_t *data, int short_or_long);
+extern const char *decode_cip_error(uint8_t primary_code, uint32_t secondary_code, int short_or_long);
 
 #endif
 

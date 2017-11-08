@@ -51,6 +51,13 @@ extern int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *leng
 
 extern int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t option_flags);
 
+extern int marshal_cip_read(bytebuf_p buf, const char *name);
+
+extern int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
+
+extern int marshal_cip_cfp_unconnected(bytebuf_p buf, const char *ioi_path);
+extern int unmarshal_cip_cfp_unconnected(bytebuf_p buf,  uint8_t *reply_service, uint8_t *reserved, uint8_t *cip_status, uint32_t *extended_status, uint16_t *length);
+
 extern int send_eip_packet(sock_p sock, uint16_t command, uint32_t session_handle, uint64_t sender_context, bytebuf_p payload);
 extern int receive_eip_packet(sock_p sock, bytebuf_p buf);
 

@@ -616,113 +616,134 @@ int process_request(logix_plc_p plc)
     }
 
     if(request) {
-        tag_p tag = request_get_tag(request);
-        attr attribs = tag_get_attribs(tag);
-        const char *name = attr_get_str(attribs, "name", NULL);
-        bytebuf_p buf = request_get_data(request);
-        tag_operation op = request_get_type(request);
-        uint16_t command;
-        uint16_t length;
-        uint32_t session_handle;
-        uint32_t status,
-        uint64_t sender_context;
-        uint32_t options;
-
-        /* determine how to encode the packet. */
-        switch(op) {
-            case REQUEST_READ:
-                rc = marshal_cip_read(buf, name);
-                break;
-
-            case REQUEST_WRITE:
-                rc = marshal_cip_write(buf, name, tag_get_bytebuf(tag));
-                break;
-
-            default:
-                pdebug(DEBUG_WARN,"Unsupported operation (%d)!", op);
-                rc = PLCTAG_ERR_UNSUPPORTED;
-                break;
-        }
+        rc = send_request(plc, request);
 
         if(rc != PLCTAG_STATUS_OK) {
-            return rc;
+            pdebug(DEBUG_WARN,"Unable to send request, error %s!", plc_tag_decode_error(rc));
+        } else {
+            rc = receive_response(plc, request);
         }
 
-        rc = marshal_cip_cfp_unconnected(buf, plc->local_path);
-        if(rc != PLCTAG_STATUS_OK) {
-            return rc;
-        }
-
-        rc = send_eip_packet(plc->sock, AB_EIP_UNCONNECTED_SEND, plc->session_handle, plc->sender_context, buf);
-        if(rc != PLCTAG_STATUS_OK) {
-            return rc;
-        }
-
-        /* get the response. */
-        rc = bytebuf_reset(buf);
-        if(rc != PLCTAG_STATUS_OK) {
-            return rc;
-        }
-
-        rc = receive_eip_packet(plc->sock, buf);
-        if(rc != PLCTAG_STATUS_OK) {
-            return rc;
-        }
-
-        rc = unmarshal_eip_header(buf, &command, &length, &session_handle, &status, &sender_context, &options);
-        if(rc != PLCTAG_STATUS_OK) {
-            return rc;
-        }
-
-
+        /* done with the response. */
+        rc_dec(response);
     }
 
-    return PLCTAG_STATUS_OK;
-}
 
-/*
- * Check to see if there is a pending request.  If there is, then
- * try to process it.
- */
-
-int process_outgoing_requests(logix_plc_p plc)
+int send_request(logix_plc_p plc, logix_request_p request)
 {
     int rc = PLCTAG_STATUS_OK;
-    logix_request_p request;
+    tag_p tag = request_get_tag(request);
+    attr attribs = tag_get_attribs(tag);
+    const char *name = attr_get_str(attribs, "name", NULL);
+    bytebuf_p buf = request_get_data(request);
+    tag_operation op = request_get_type(request);
+    uint16_t command;
+    uint16_t length;
+    uint32_t session_handle;
+    uint32_t status,
+    uint64_t sender_context;
+    uint32_t options;
 
-    critical_block(plc->mutex) {
-        /* pop one off the beginning treating the requests list as a queue. */
-        request = vector_remove(plc->requests, 0);
+    /* determine how to encode the packet. */
+    switch(op) {
+        case REQUEST_READ:
+            rc = marshal_cip_read(buf, name);
+            break;
+
+        case REQUEST_WRITE:
+            rc = marshal_cip_write(buf, name, tag_get_bytebuf(tag));
+            break;
+
+        default:
+            pdebug(DEBUG_WARN,"Unsupported operation (%d)!", op);
+            rc = PLCTAG_ERR_UNSUPPORTED;
+            break;
     }
 
-    if(request) {
-        /* there is something to do. */
-        if(request_get_abort(request)) {
-            /* clean up the request. */
-            pdebug(DEBUG_DETAIL,"Request not started and abort requested.");
-
-            rc_dec(request);
-
-            return PLCTAG_STATUS_OK;
-        }
-
-        if(request->read_requested) {
-            return process_read_request(plc, request);
-        } else if(request->write_requested) {
-            return process_write_request(plc, request);
-        }
-    } else {
-        pdebug(DEBUG_SPEW,"No request to process.");
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal CIP request!");
+        return rc;
     }
 
-    return PLCTAG_STATUS_OK;
+    rc = marshal_cip_cfp_unconnected(buf, plc->path);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal CFP packet!");
+        return rc;
+    }
+
+    rc = send_eip_packet(plc->sock, AB_EIP_UNCONNECTED_SEND, plc->session_handle, plc->sender_context, buf);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to send EIP packet, error %s!", plc_tag_decode_error(rc));
+        return rc;
+    }
+
+    return rc;
 }
 
 
-int process_read_request(logix_plc_p plc, logix_request_p request)
+
+
+int receive_response(logix_plc_p plc, logix_request_p request)
 {
+    int rc = PLCTAG_STATUS_OK;
+    tag_p tag = request_get_tag(request);
+    bytebuf_p buf = request_get_data(request);
+    tag_operation op = request_get_type(request);
+    uint8_t reply_service = 0;
+    uint8_t reserved = 0;
+    uint32_t eip_status = 0;
+    uint8_t cip_status = 0;
+    uint32_t extended_status = 0;
+    uint16_t length = 0;
 
+    rc = bytebuf_reset(buf);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to reset request buffer.");
+        break;
+    }
+
+    rc = receive_eip_packet(plc->sock, buf);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to receive response packet, error %s!", plc_tag_decode_error(rc));
+        return rc;
+    }
+
+    rc = unmarshal_eip_header(buf, &command, &length, &session_handle, &eip_status, &sender_context, &options);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Unable to unmarshal EIP header, error %s!", plc_tag_decode_error(rc));
+        return rc;
+    }
+
+    if(status != AB_EIP_OK) {
+        pdebug(DEBUG_WARN,"Response packet status is bad: %d", (int)status);
+        return PLCTAG_ERR_REMOTE_ERR;
+    }
+
+    rc = unmarshal_cip_cfp_unconnected(buf, &reply_service, &reserved, &cip_status, &extended_status, &length);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal CFP packet!");
+        return rc;
+    }
+
+    if(reply_service != (AB_CIP_CMD_CIP_READ | AB_CIP_CMD_CIP_OK)) {
+        pdebug(DEBUG_WARN,"Unknown CIP command response!  Service code %d", (int)reply_service);
+        return PLCTAG_ERR_BAD_DATA;
+    }
+
+    if(status != 0) {
+        pdebug(DEBUG_WARN,"Operation failed, %s %s",decode_cip_error(status, extended_status, 0), decode_cip_error(status, extended_status, 1));
+        return PLCTAG_ERR_REMOTE_ERR;
+    }
+
+    /* determine how to decode the packet. */
+
+    /* FIXME - write this code! */
+
+    return rc;
 }
+
+
+
 
 
 

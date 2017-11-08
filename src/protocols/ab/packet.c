@@ -32,6 +32,8 @@
 
 
 
+static int cip_encode_tag_name(bytebuf_p buf, const char *name);
+
 
 #define MARSHAL_FIELD(BUF, BITS, FIELD)                                \
     do {                                                               \
@@ -223,6 +225,39 @@ int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t optio
 
 
 
+
+
+
+
+int cip_encode_name(bytebuf_p buf, const char *name)
+{
+
+}
+
+
+
+
+int marshal_cip_read(bytebuf_p buf, const char *name)
+{
+
+}
+
+
+int unmarshal_cip_read(bytebuf_p buf, const char *name);
+
+int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
+int unmarshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
+
+int marshal_cip_cfp_unconnected(bytebuf_p buf, const char *ioi_path);
+int unmarshal_cip_cfp_unconnected(bytebuf_p buf,  uint8_t *reply_service, uint8_t *reserved, uint8_t *cip_status, uint32_t *extended_status, uint16_t *length);
+
+
+
+
+
+
+
+
 int send_eip_packet(sock_p sock, uint16_t command, uint32_t session_handle, uint64_t sender_context, bytebuf_p payload)
 {
     int rc = PLCTAG_STATUS_OK;
@@ -342,4 +377,265 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
     pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
+}
+
+
+
+
+/***********************************************************************
+ ************************ Helper Functions *****************************
+ **********************************************************************/
+
+
+#ifdef START
+#undef START
+#endif
+#define START 1
+
+#ifdef ARRAY
+#undef ARRAY
+#endif
+#define ARRAY 2
+
+#ifdef DOT
+#undef DOT
+#endif
+#define DOT 3
+
+#ifdef NAME
+#undef NAME
+#endif
+#define NAME 4
+
+/*
+ * cip_encode_tag_name()
+ *
+ * This takes a LGX-style tag name like foo[14].blah and
+ * turns it into an IOI path/string.
+ */
+
+int cip_encode_tag_name(bytebuf_p buf, const char *name)
+{
+    const char *p = name;
+    int word_count_index = 0;
+    int word_count = 0;
+    int symbol_len_index = 0;
+    int symbol_len
+    int tmp_index = 0;
+    int state;
+    int rc = PLCTAG_STATUS_OK;
+
+    /* reserve room for word count for IOI string. */
+    word_count_index = bytebuf_get_cursor(buf);
+
+    /* inject a place holder for the IOI string size count */
+    rc = bytebuf_set_int8(buf, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to inject placeholder for IOI size count!");
+        return rc;
+    }
+
+    state = START;
+
+    while(*p) {
+        switch(state) {
+            case START:
+
+                /* must start with an alpha character or _ or :. */
+                if(isalpha(*p) || *p == '_' || *p == ':') {
+                    state = NAME;
+                } else if(*p == '.') {
+                    state = DOT;
+                } else if(*p == '[') {
+                    state = ARRAY;
+                } else {
+                    return 0;
+                }
+
+                break;
+
+            case NAME:
+                rc = bytebuf_set_int8(buf, (int8_t)0x91);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to inject symbol start!");
+                    return rc;
+                }
+
+                /* inject place holder for the name length */
+                symbol_len_index = bytebuf_get_cursor(buf);
+                rc = bytebuf_set_int8(buf, 0);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to inject symbol segment length byte!");
+                    return rc;
+                }
+
+                while(isalnum(*p) || *p == '_' || *p == ':') {
+                    rc = bytebuf_set_int8(buf, (int8_t)*p);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        pdebug(DEBUG_WARN,"Unable to inject symbol character!");
+                        return rc;
+                    }
+
+                    p++;
+                    symbol_len++;
+                }
+
+                /* must pad the name to a multiple of two bytes */
+                if(symbol_len & 0x01) {
+                    rc = bytebuf_set_int8(buf, 0);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        pdebug(DEBUG_WARN,"Unable to inject symbol padding!");
+                        return rc;
+                    }
+                }
+
+                /* write the length back in. */
+                tmp_index = bytebuf_get_cursor(buf);
+
+                rc = bytebuf_set_cursor(buf, symbol_len_index);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to set buffer cursor to write symbolic segment length byte!");
+                    return rc;
+                }
+
+                rc = bytebuf_set_int8(buf, (int8_t)symbol_len);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to set buffer cursor to write symbolic segment length byte!");
+                    return rc;
+                }
+
+                /* return the cursor to the end of the buffer. */
+                rc = bytebuf_set_cursor(buf, tmp_index);
+                if(rc != PLCTAG_STATUS_OK) {
+                    pdebug(DEBUG_WARN,"Unable to set buffer cursor to write symbolic segment length byte!");
+                    return rc;
+                }
+
+                state = START;
+
+                break;
+
+            case ARRAY:
+                /* move the pointer past the [ character */
+                p++;
+
+                do {
+                    uint32_t val;
+                    char *np = NULL;
+                    val = (uint32_t)strtol(p,&np,0);
+
+                    if(np == p) {
+                        /* we must have a number */
+                        pdebug(DEBUG_WARN,"Bad path format.  Must have number at position %d", p - name);
+                        return PLCTAG_ERR_BAD_PARAM;
+                    }
+
+                    p = np;
+
+                    if(val > 0xFFFF) {
+                        rc = bytebuf_set_int8(buf, (int8_t)0x2A);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment type byte!");
+                            return rc;
+                        }
+
+                        /* inject a padding byte. */
+                        rc = bytebuf_set_int8(buf, (int8_t)0);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment type padding byte!");
+                            return rc;
+                        }
+
+                        rc = bytebuf_set_int32(buf, (int32_t)val);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment value!");
+                            return rc;
+                        }
+                    } else if(val > 0xFF) {
+                        rc = bytebuf_set_int8(buf, (int8_t)0x29);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment type byte!");
+                            return rc;
+                        }
+
+                        /* inject a padding byte. */
+                        rc = bytebuf_set_int8(buf, (int8_t)0);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment type padding byte!");
+                            return rc;
+                        }
+
+                        rc = bytebuf_set_int16(buf, (int16_t)val);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment value!");
+                            return rc;
+                        }
+                    } else {
+                        rc = bytebuf_set_int8(buf, (int8_t)0x28);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment type byte!");
+                            return rc;
+                        }
+
+                        rc = bytebuf_set_int8(buf, (int8_t)val);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            pdebug(DEBUG_WARN,"Unable to inject numeric segment value!");
+                            return rc;
+                        }
+                    }
+
+                    /* eat up whitespace */
+                    while(isspace(*p)) p++;
+                } while(*p == ',');
+
+                if(*p != ']')
+                    pdebug(DEBUG_WARN,"Incorrect array format, must have closing ] character.");
+                    return PLCTAG_ERR_BAD_PARAM;
+
+                p++;
+
+                state = START;
+
+                break;
+
+            case DOT:
+                p++;
+                state = START;
+                break;
+
+            default:
+                /* this should never happen */
+                return 0;
+
+                break;
+        }
+    }
+
+    /* word_count is in units of 16-bit integers, do not
+     * count the word_count value itself.
+     */
+    //*word_count = (uint8_t)((dp - data)-1)/2;
+    word_count = (bytebuf_get_cursor(buf) - word_count_index) / 2;
+
+    tmp_index = bytebuf_get_cursor(buf);
+
+    rc = bytebuf_set_cursor(buf, word_count_index);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set cursor back to word count byte!");
+        return rc;
+    }
+
+    rc = bytebuf_set_int8(buf, (int8_t)word_count);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set word count byte!");
+        return rc;
+    }
+
+    rc = bytebuf_set_cursor(buf, tmp_index);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set cursor end of encoded name!");
+        return rc;
+    }
+
+    return PLCTAG_STATUS_OK;
 }
