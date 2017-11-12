@@ -18,18 +18,20 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-#ifndef __UTIL_HASHTABLE_H__
-#define __UTIL_HASHTABLE_H__ 1
+#ifndef __UTIL_BYTEVECTOR_H__
+#define __UTIL_BYTEVECTOR_H__ 1
 
 
-typedef struct hashtable_t *hashtable_p;
+typedef struct byte_vector_t *byte_vector_p;
 
-extern hashtable_p hashtable_create(int size);
-extern void *hashtable_get(hashtable_p table, void *key, int key_len);
-extern int hashtable_put(hashtable_p table, void *key, int key_len, void *arg);
-extern int hashtable_on_each(hashtable_p table, int (*callback_func)(hashtable_p table, void *key, int key_len, void *data));
-extern void *hashtable_remove(hashtable_p table, void *key, int key_len);
-extern int hashtable_destroy(hashtable_p table);
+extern byte_vector_p byte_vector_create(int capacity);
+extern int byte_vector_length(byte_vector_p vec);
+extern int byte_vector_put(byte_vector_p vec, int index, uint8_t val);
+extern uint8_t byte_vector_get(byte_vector_p vec, int index);
+extern int byte_vector_on_each(byte_vector_p vec, int (*callback_func)(byte_vector_p vec, int index, void **data, int arg_count, void **args), int num_args, ...);
+extern void *byte_vector_remove(byte_vector_p vec, int index);
+extern int byte_vector_destroy(byte_vector_p vec);
+
 
 
 #endif

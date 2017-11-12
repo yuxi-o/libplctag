@@ -18,18 +18,15 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 
-#ifndef __UTIL_HASHTABLE_H__
-#define __UTIL_HASHTABLE_H__ 1
+#ifndef __UTIL_BYTEORDER_H__
+#define __UTIL_BYTEORDER_H__
 
+#include <util/macros.h>
 
-typedef struct hashtable_t *hashtable_p;
+#define marshal_data(buf, buf_size, ...)  marshal_data_impl(buf, buf_size, (COUNT_NARG(__VA_ARGS__)-2), __VA_ARGS__)
+extern int  marshal_data_impl(uint8_t *buf, size_t buf_size, int arg_count, ...);
 
-extern hashtable_p hashtable_create(int size);
-extern void *hashtable_get(hashtable_p table, void *key, int key_len);
-extern int hashtable_put(hashtable_p table, void *key, int key_len, void *arg);
-extern int hashtable_on_each(hashtable_p table, int (*callback_func)(hashtable_p table, void *key, int key_len, void *data));
-extern void *hashtable_remove(hashtable_p table, void *key, int key_len);
-extern int hashtable_destroy(hashtable_p table);
-
+#define unmarshal_data(buf, buf_size, ...)  unmarshal_data_impl(buf, buf_size, (COUNT_NARG(__VA_ARGS__)-2), __VA_ARGS__)
+extern int  unmarshal_data_impl(uint8_t *buf, size_t buf_size, int arg_count, ...);
 
 #endif

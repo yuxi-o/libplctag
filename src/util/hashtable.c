@@ -179,6 +179,30 @@ int hashtable_put(hashtable_p table, void *key, int key_len, void  *data)
 
 
 
+int hashtable_on_each(hashtable_p table, int (*callback_func)(hashtable_p table, void *key, int key_len, void *data))
+{
+    int rc = PLCTAG_STATUS_OK;
+
+    if(!table) {
+        pdebug(DEBUG_WARN,"Hashtable pointer null or invalid");
+    }
+
+    for(int bucket_index=0; rc == PLCTAG_STATUS_OK && bucket_index < vector_length(table->buckets); bucket_index++) {
+        vector_p bucket = vector_get(table->buckets, bucket_index);
+        for(int entry_index=0; rc == PLCTAG_STATUS_OK && entry_index < vector_length(bucket); entry_index++) {
+            hashtable_entry_p entry = vector_get(bucket, entry_index);
+
+            if(entry) {
+                rc = callback_func(table, entry->key, entry->key_len, entry->data);
+            }
+        }
+    }
+
+    return rc;
+}
+
+
+
 void * hashtable_remove(hashtable_p table, void *key, int key_len)
 {
     uint32_t bucket_index = 0;
