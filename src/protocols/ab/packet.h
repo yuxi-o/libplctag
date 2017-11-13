@@ -72,6 +72,9 @@
 /***********************************************************************
  ***************************** CIP Data ********************************
  **********************************************************************/
+#define AB_CIP_OK ((uint8_t)0)
+#define AB_CIP_CMD_OK ((uint8_t)0x80)
+
 
 /* CIP embedded packet commands */
 #define AB_CIP_READ             ((uint8_t)0x4C)
@@ -129,7 +132,7 @@
 
 
 
-extern int marshal_eip_header(bytebuf_p buf, uint16_t command, uint32_t session_handle, uint64_t sender_context);
+extern int marshal_eip_header(int prev_rc, bytebuf_p buf, uint16_t command, uint32_t session_handle, uint64_t sender_context);
 extern int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *length, uint32_t *session_handle, uint32_t *status, uint64_t *sender_context);
 
 extern int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t option_flags);
@@ -144,7 +147,7 @@ extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf);
 extern int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status);
 extern int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf);
 
-extern int send_eip_packet(sock_p sock, int (*abort_check)(void *arg), void *abort_arg, uint16_t command, uint32_t session_handle, uint64_t sender_context, bytebuf_p payload);
-extern int receive_eip_packet(sock_p sock, int (*abort_check)(void *arg), void *abort_arg, bytebuf_p buf);
+extern int send_eip_packet(sock_p sock, bytebuf_p payload);
+extern int receive_eip_packet(sock_p sock, bytebuf_p buf);
 
 #endif

@@ -64,7 +64,7 @@ static int cip_encode_tag_name(bytebuf_p buf, const char *name);
 
 
 
-int marshal_eip_header(bytebuf_p buf,
+int marshal_eip_header(int prev_rc, bytebuf_p buf,
                         uint16_t command,         /* command, like Register Session*/
                         uint32_t session_handle,  /* from session set up */
                         uint64_t sender_context)  /* identifies the unconnected session packet */
@@ -75,6 +75,10 @@ int marshal_eip_header(bytebuf_p buf,
     uint32_t options = 0;
 
     pdebug(DEBUG_DETAIL,"Starting.");
+
+    if(prev_rc != PLCTAG_STATUS_OK) {
+        return prev_rc;
+    }
 
     payload_size = bytebuf_get_size(buf);
 
@@ -195,6 +199,11 @@ int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *length, uin
         //~ return rc;
     //~ }
     //~ *options = (uint32_t)(int32_t)val;
+
+    if(status != AB_EIP_OK) {
+        pdebug(DEBUG_WARN,"Remote EIP error %d", status);
+        return PLCTAG_ERR_REMOTE_ERR;
+    }
 
     pdebug(DEBUG_DETAIL,"Done.");
 
@@ -759,43 +768,33 @@ int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
 
 
 
-int send_eip_packet(sock_p sock, uint16_t command, uint32_t session_handle, uint64_t sender_context, bytebuf_p payload)
+int send_eip_packet(sock_p sock, bytebuf_p payload)
 {
     int rc = PLCTAG_STATUS_OK;
-    int offset = 0;
+    int offset = bytebuf_get_cursor(payload);
 
     pdebug(DEBUG_DETAIL,"Starting.");
-
-    /* inject an EIP encapsulation header. */
-    rc = marshal_eip_header(payload,command, session_handle, sender_context);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error inserting EIP encapsulation header!");
-        return rc;
-    }
-
-    /* set the cursor back to the beginning. */
-    bytebuf_set_cursor(payload, 0);
 
     pdebug(DEBUG_DETAIL,"Sending packet:");
     pdebug_dump_bytes(DEBUG_DETAIL,bytebuf_get_buffer(payload), bytebuf_get_size(payload));
 
     /* send the data. */
-    do {
-        rc = socket_write(sock, bytebuf_get_buffer(payload), bytebuf_get_size(payload) - offset);
-        if(rc > 0) {
-            offset += rc;
-            if(offset < bytebuf_get_size(payload)) {
-                bytebuf_set_cursor(payload, offset);
-            }
-        }
-    } while(!rc_thread_check_abort() && rc >= 0 && offset < bytebuf_get_size(payload));
-
-    if(rc_thread_check_abort()) {
-        rc = PLCTAG_ERR_ABORT;
+    rc = socket_write(sock, bytebuf_get_buffer(payload), bytebuf_get_size(payload) - offset);
+    if(rc < 0) {
+        pdebug(DEBUG_WARN,"Error writing data to socket!");
+        return rc;
     }
 
-    if(rc > 0) {
+    bytebuf_set_cursor(payload, offset + rc);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error setting buffer cursor!");
+        return rc;
+    }
+
+    if(bytebuf_get_cursor(payload) == bytebuf_get_size(payload)) {
         rc = PLCTAG_STATUS_OK;
+    } else {
+        rc = PLCTAG_STATUS_PENDING;
     }
 
     pdebug(DEBUG_DETAIL,"Done.");
@@ -807,29 +806,25 @@ int send_eip_packet(sock_p sock, uint16_t command, uint32_t session_handle, uint
 
 int receive_eip_packet(sock_p sock, bytebuf_p buf)
 {
-    int rc = 0;
+    int rc = PLCTAG_STATUS_PENDING;
     int total_read = 0;
-    int data_needed = EIP_ENCAP_SIZE; /* MAGIC */
+    int data_needed = EIP_ENCAP_SIZE;
+    int got_header = 0;
 
     pdebug(DEBUG_DETAIL,"Starting.");
-
-    //~ bytebuf_reset(buf);
-
-    //~ /* make sure that there is room for the eip header. */
-    //~ bytebuf_set_cursor(buf, EIP_ENCAP_SIZE); /* MAGIC */
-
-    //~ /* now set it back to start reading into it at zero. */
-    //~ bytebuf_set_cursor(buf, 0);
 
     /* how much have we read so far? */
     total_read = bytebuf_get_size(buf);
 
+    /* if we got the header, then we can determine how much more we need to get.*/
     if(total_read >= EIP_ENCAP_SIZE) {
         uint16_t command;
         uint16_t length;
         uint32_t session_handle;
         uint32_t status;
         uint64_t sender_context;
+
+        got_header = 1;
 
         /* get the header info. */
 
@@ -849,85 +844,62 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
 
         data_needed = EIP_ENCAP_SIZE + (int)length;
 
-        /* set the cursor to the end of the data. */
-        rc = bytebuf_set_cursor(buf, 0);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to set cursor!");
-            return rc;
-        }
-
-        /* ensure that the byte buffer has sufficient capacity. */
-        rc = bytebuf_set_capacity(buf, data_needed);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to set cursor!");
-            return rc;
+        if(length == 0) {
+            rc = PLCTAG_STATUS_OK;
         }
     } else {
-
+        data_needed = EIP_ENCAP_SIZE;
     }
 
+    /* ensure that the byte buffer has sufficient capacity. */
+    rc = bytebuf_set_capacity(buf, data_needed);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set cursor!");
+        return rc;
+    }
 
-    if()
+    /* set the cursor to the end of the data. */
+    rc = bytebuf_set_cursor(buf, total_read);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set cursor!");
+        return rc;
+    }
 
-    /* read the header first, then figure out how much more we need to read. */
-    do {
-        rc = socket_read(sock, bytebuf_get_buffer(buf) + total_read,
-                         data_needed - total_read);
+    rc = socket_read(sock, bytebuf_get_buffer(buf) + total_read,
+                     data_needed - total_read);
 
-        if (rc < 0) {
-            if (rc != PLCTAG_ERR_NO_DATA) {
-                /* error! */
-                pdebug(DEBUG_WARN,"Error reading socket! rc=%d",rc);
-                return rc;
-            }
-        } else {
-            total_read += rc;
-
-            pdebug(DEBUG_DETAIL,"Got %d more bytes of data.", rc);
-
-            /* recalculate the amount of data needed if we have just completed the read of an encap header */
-            if (total_read >= EIP_ENCAP_SIZE && data_needed == EIP_ENCAP_SIZE) {
-                uint16_t command;
-                uint16_t length;
-                uint32_t session_handle;
-                uint32_t status;
-                uint64_t sender_context;
-
-                bytebuf_set_cursor(buf, 0);
-
-                /* parse the header. */
-                rc = unmarshal_eip_header(buf, &command, &length, &session_handle, &status, &sender_context);
-                if(rc != PLCTAG_STATUS_OK) {
-                    pdebug(DEBUG_WARN,"Error parsing EIP encapsulation header!");
-                    return rc;
-                }
-
-                data_needed = EIP_ENCAP_SIZE + length;
-
-                /* ensure the capacity */
-                bytebuf_set_cursor(buf, data_needed);
-
-                /* set back to the end of the data */
-                bytebuf_set_cursor(buf, total_read);
-            }
+    /* was there an error? */
+    if (rc < 0) {
+        if (rc != PLCTAG_ERR_NO_DATA) {
+            /* error! */
+            pdebug(DEBUG_WARN,"Error reading socket! rc=%d",rc);
+            return rc;
         }
-    } while (!rc_thread_check_abort() && rc > 0 && total_read < data_needed);
 
-    if(rc_thread_check_abort()) {
-        rc = PLCTAG_ERR_ABORT;
+        return PLCTAG_STATUS_PENDING;
+    } else {
+        /* there was new data. */
+        total_read += rc;
+
+        pdebug(DEBUG_DETAIL,"Got %d more bytes of data.", rc);
     }
 
-    if(rc >= 0) {
-        rc = PLCTAG_STATUS_OK;
+    /* set the cursor to the end of the data. */
+    rc = bytebuf_set_cursor(buf, total_read);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set cursor!");
+        return rc;
+    }
 
-        /* reset the cursor to the beginning */
-        bytebuf_set_cursor(buf, 0);
-
+    /* still getting data. */
+    if(got_header && total_read == data_needed) {
         pdebug(DEBUG_DETAIL,"Received packet:");
         pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
-    }
 
-    pdebug(DEBUG_DETAIL,"Done.");
+        rc = PLCTAG_STATUS_OK;
+    } else {
+        rc = PLCTAG_STATUS_PENDING;
+    }
 
     return rc;
 }

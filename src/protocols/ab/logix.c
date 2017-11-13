@@ -24,6 +24,7 @@
 #include <platform.h>
 #include <lib/libplctag.h>
 #include <ab/packet.h>
+#include <ab/error_codes.h>
 #include <ab/logix.h>
 #include <util/debug.h>
 #include <util/rc_thread.h>
@@ -90,7 +91,6 @@ static void plc_destroy(void *plc_arg, int arg_count, void **args);
 static int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
 
 static int process_request(logix_plc_p plc);
-static int check_request_abort(void *req_arg);
 static int process_read_request(logix_plc_p plc, logix_request_p request);
 static int process_write_request(logix_plc_p plc, logix_request_p request);
 static int process_get_tags_request(logix_plc_p plc, logix_request_p request);
@@ -106,7 +106,6 @@ static char *match_number(char *p);
 
 static logix_request_p request_create(tag_p tag, request_type operation);
 static void request_destroy(void *request_arg, int extra_arg_count, void **extra_args);
-static bytebuf_p request_get_data(logix_request_p request);
 static request_type request_get_type(logix_request_p request);
 static tag_p request_get_tag(logix_request_p request);
 static int request_abort(logix_request_p request);
@@ -695,16 +694,6 @@ int process_request(logix_plc_p plc)
 }
 
 
-int check_request_abort(void *req_arg)
-{
-    logix_request_p request = req_arg;
-
-    return (request_get_type(request) == REQUEST_ABORT);
-}
-
-
-
-
 
 int process_read_request(logix_plc_p plc, logix_request_p request)
 {
@@ -728,97 +717,103 @@ int process_write_request(logix_plc_p plc, logix_request_p request)
 int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, uint32_t *last_instance_id)
 {
     int rc = PLCTAG_STATUS_OK;
+    int32_t instance_id;
+    uint16_t string_len;
+    char symbol_name[128];
+    uint16_t symbol_type;
+    int symbol_name_index;
+    int end_of_entry_index;
+    logix_tag_info_p tag_info = NULL;
 
-    do {
-        int32_t instance_id;
-        uint16_t string_len;
-        char symbol_name[128];
-        uint16_t symbol_type;
-        int symbol_name_index;
-        int end_of_entry_index;
-        logix_tag_info_p tag_info;
+    if(bytebuf_get_cursor(buf) >= bytebuf_get_size(buf)) {
+        pdebug(DEBUG_INFO,"No data left in buffer.");
+        return PLCTAG_ERR_NO_DATA;
+    }
 
-        /* each entry looks like this:
-        uint32_t instance_id    monotonically increasing but not contiguous
-        uint16_t string_len     string length count
-        uint8_t[] string_data   string bytes (string_len of them)
-        uint16_t symbol_type    type of the symbol.
-        */
+    /* each entry looks like this:
+    uint32_t instance_id    monotonically increasing but not contiguous
+    uint16_t string_len     string length count
+    uint8_t[] string_data   string bytes (string_len of them)
+    uint16_t symbol_type    type of the symbol.
+    */
 
-        rc = bytebuf_get_int32(buf, &instance_id);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to get instance ID!");
-            return rc;
-        }
+    rc = bytebuf_get_int32(buf, &instance_id);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to get instance ID!");
+        return rc;
+    }
 
-        /* save this for later */
-        *last_instance_id = instance_id;
+    /* save this for later */
+    *last_instance_id = instance_id;
 
-        tag_info->instance_id = instance_id;
+    rc = bytebuf_get_int16(buf, (int16_t*)&string_len);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to get symbol name length!");
+        return rc;
+    }
 
-        rc = bytebuf_get_int16(buf, (int16_t*)&string_len);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to get symbol name length!");
-            return rc;
-        }
+    /* get a placeholder for the symbol name */
+    symbol_name_index = bytebuf_get_cursor(buf);
 
-        /* get a placeholder for the symbol name */
-        symbol_name_index = bytebuf_get_cursor(buf);
+    /* copy the name for printing */
+    snprintf(&symbol_name[0], (sizeof(symbol_name) < ((size_t)string_len+1) ? sizeof(symbol_name) : (size_t)string_len+1),"%s",bytebuf_get_buffer(buf));
 
-        /* copy the name for printing */
-        snprintf(&symbol_name[0], (sizeof(symbol_name) < ((size_t)string_len+1) ? sizeof(symbol_name) : (size_t)string_len+1),"%s",bytebuf_get_buffer(buf));
+    /* skip to the symbol type */
+    rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + (int)string_len);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to move cursor to symbol type!");
+        return rc;
+    }
 
-        /* skip to the symbol type */
-        rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + (int)string_len);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to move cursor to symbol type!");
-            return rc;
-        }
+    /* get the symbol type */
+    rc = bytebuf_get_int16(buf, (int16_t*)&symbol_type);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to get symbol type!");
+        return rc;
+    }
 
-        /* get the symbol type */
-        rc = bytebuf_get_int16(buf, (int16_t*)&symbol_type);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to get symbol type!");
-            return rc;
-        }
+    pdebug(DEBUG_INFO,"Get symbol entry for \"%s\" with instance ID %x and type %x",symbol_name, (int)instance_id, (int)symbol_type);
 
-        pdebug(DEBUG_INFO,"Get symbol entry for \"%s\" with instance ID %x and type %x",symbol_name, (int)instance_id, (int)symbol_type);
+    /* get the end of entry index for later. */
+    end_of_entry_index = bytebuf_get_cursor(buf);
 
-        /* get the end of entry index for later. */
-        end_of_entry_index = bytebuf_get_cursor(buf);
+    /* seek back to the beginning of the symbol name */
+    rc = bytebuf_set_cursor(buf, symbol_name_index);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to move cursor to symbol name!");
+        return rc;
+    }
 
-        /* seek back to the beginning of the symbol name */
-        rc = bytebuf_set_cursor(buf, symbol_name_index);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to move cursor to symbol name!");
-            return rc;
-        }
-
-        /* store the symbol data into the hashtable. */
-        tag_info = hashtable_get(tag_info_table, bytebuf_get_buffer(buf), (int)string_len);
+    /* store the symbol data into the hashtable. */
+    tag_info = hashtable_get(tag_info_table, bytebuf_get_buffer(buf), (int)string_len);
+    if(!tag_info) {
+        /* make an entry */
+        tag_info = mem_alloc(sizeof(struct logix_tag_info_t));
         if(!tag_info) {
-            /* make an entry */
-            tag_info = mem_alloc(sizeof(struct logix_tag_info_t));
-            if(!tag_info) {
-                pdebug(DEBUG_ERROR,"Unable to allocate new tag_info struct!");
-                return PLCTAG_ERR_NO_MEM;
-            }
-
-            /* add the instance to the hashtable */
-            rc = hashtable_put(tag_info_table, bytebuf_get_buffer(buf), (int)string_len, tag_info);
+            pdebug(DEBUG_ERROR,"Unable to allocate new tag_info struct!");
+            return PLCTAG_ERR_NO_MEM;
         }
 
-        /* perhaps the instance ID could be different? */
-        tag_info->instance_id = instance_id;
-        tag_info->type_info = symbol_type;
+        /* add the instance to the hashtable */
+        rc = hashtable_put(tag_info_table, bytebuf_get_buffer(buf), (int)string_len, tag_info);
 
-        /* seek to the end of the symbol entry */
-        rc = bytebuf_set_cursor(buf, end_of_entry_index);
         if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to move cursor to symbol name!");
+            pdebug(DEBUG_WARN,"Unable to insert new info struct into tag info table!");
             return rc;
         }
-    } while(bytebuf_get_cursor(buf) < bytebuf_get_size(buf));
+    }
+
+    /* perhaps the instance ID could be different? */
+    tag_info->instance_id = instance_id;
+    tag_info->type_info = symbol_type;
+
+    /* seek to the end of the symbol entry */
+    rc = bytebuf_set_cursor(buf, end_of_entry_index);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to move cursor to symbol name!");
+        return rc;
+    }
+
 
     return rc;
 }
@@ -841,35 +836,85 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
     uint16_t cip_extended_status = 0;
 
     do {
+        /* set the cursor back to zero so that we can start writing the data to the socket. */
+        rc = bytebuf_reset(plc->data);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error inserting resetting byte buffer!");
+            return rc;
+        }
 
-        rc = marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(marshal_cip_get_tag_info(buf, last_instance_id), buf, plc->path), buf);
+        rc = marshal_eip_header(marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(marshal_cip_get_tag_info(buf, last_instance_id),
+                                                                                       buf, plc->path),
+                                                            buf),
+                                buf,  AB_EIP_UNCONNECTED_SEND, plc->session_handle, plc->session_context);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to marshal Tag info service request!");
             return rc;
         }
 
-        /* send the packet. */
-        rc = send_eip_packet(plc->sock, check_request_abort, request, AB_EIP_UNCONNECTED_SEND, plc->session_handle, plc->session_context, buf);
+        do {
+            rc = send_eip_packet(plc->sock, buf);
+            if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+                /* FIXME - should we kill the plc at this point? */
+                pdebug(DEBUG_WARN,"Unable to send packet!");
+                return rc;
+            }
+        } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
+
+        if(rc_thread_check_abort() || request_get_abort(request)) {
+            rc = PLCTAG_ERR_ABORT;
+        }
+
         if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to send EIP request packet, error %s!", plc_tag_decode_error(rc));
+            pdebug(DEBUG_WARN,"Error sending session registration request!");
             return rc;
         }
 
-        /* receive the packet */
-        rc = receive_eip_packet(plc->sock, check_request_abort, request, buf);
+        /* now get the reply */
+
+        /* reset the buffer so that we can read in data. */
+        bytebuf_reset(plc->data);
+
+        do {
+            rc = receive_eip_packet(plc->sock, plc->data);
+            if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+                pdebug(DEBUG_WARN,"Unable to read in response packet!");
+                return rc;
+            }
+        } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
+
+        if(rc_thread_check_abort() || request_get_abort(request)) {
+            rc = PLCTAG_ERR_ABORT;
+        }
+
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error receiving session registration response!");
+            return rc;
+        }
+
+        /* process the response */
+        rc = unmarshal_cip_cm_unconnected(unmarshal_cip_cfp_unconnected(unmarshal_eip_header(buf, &eip_command, &eip_payload_length, &session_handle, &eip_status, &session_context),
+                                                                        buf),
+                                          buf, &cip_reply_service, &cip_status, &cip_extended_status);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
             return rc;
         }
 
-        rc = unmarshal_cip_cm_unconnected(unmarshal_cip_cfp_unconnected(unmarshal_eip_header(buf, &eip_command, &eip_payload_length, &session_handle, &eip_status, &session_context), buf), buf, &cip_reply_service, &cip_status, &cip_extended_status);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
-            return rc;
+        if(cip_status != AB_CIP_OK) {
+            pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(cip_status, cip_extended_status, 0), decode_cip_error(cip_status, cip_extended_status, 1));
+            return PLCTAG_ERR_REMOTE_ERR;
         }
 
-        rc = process_get_tags_reply_entries(buf, plc->tag_info, &last_instance_id);
-    } while(!check_abort(request) && rc == PLCTAG_STATUS_OK && cip_status == AB_CIP_STATUS_FRAG);
+        do {
+            rc = process_get_tags_reply_entries(buf, plc->tag_info, &last_instance_id);
+        } while(rc == PLCTAG_STATUS_OK);
+
+        if(rc == PLCTAG_ERR_NO_DATA) {
+            /* not really an error. */
+            rc = PLCTAG_STATUS_OK;
+        }
+    } while(!request_get_abort(request) && !rc_thread_check_abort() && rc == PLCTAG_STATUS_OK && cip_status == AB_CIP_STATUS_FRAG);
 
     return rc;
 }
@@ -885,10 +930,9 @@ int register_plc(logix_plc_p plc)
     /* plc response data */
     uint16_t command = 0;
     uint16_t length = 0;
-    uint32_t plc_handle= 0;
+    uint32_t session_handle= 0;
     uint32_t status = 0;
     uint64_t sender_context = 0;
-    uint32_t options = 0;
 
     pdebug(DEBUG_INFO, "Starting.");
 
@@ -900,26 +944,56 @@ int register_plc(logix_plc_p plc)
      */
     bytebuf_reset(plc->data);
 
-    /* request the specific EIP/CIP version */
-    rc = marshal_register_session(plc->data,(uint16_t)AB_EIP_VERSION, (uint16_t)0);
+    /* create a register session packet */
+    rc = marshal_eip_header(marshal_register_session(plc->data,(uint16_t)AB_EIP_VERSION, (uint16_t)0),
+                            plc->data, (uint16_t)AB_EIP_REGISTER_SESSION, (uint32_t)plc->session_handle,(uint64_t)0);
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to marshall register plc packet!");
+        pdebug(DEBUG_WARN,"Error marshalling register session packet!");
         return rc;
     }
 
-    rc = send_eip_packet(plc->sock, (uint16_t)AB_EIP_REGISTER_SESSION, (uint32_t)plc->plc_handle,(uint64_t)0, plc->data);
+    /* set the cursor back to zero so that we can start writing the data to the socket. */
+    rc = bytebuf_set_cursor(plc->data, 0);
     if(rc != PLCTAG_STATUS_OK) {
-        /* FIXME - should we kill the plc at this point? */
-        pdebug(DEBUG_WARN,"Unable to send packet!");
+        pdebug(DEBUG_WARN,"Error inserting setting bytebuffer cursor!");
+        return rc;
+    }
+
+    do {
+        rc = send_eip_packet(plc->sock, plc->data);
+        if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+            /* FIXME - should we kill the plc at this point? */
+            pdebug(DEBUG_WARN,"Unable to send packet!");
+            return rc;
+        }
+    } while(rc == PLCTAG_STATUS_PENDING && !rc_thread_check_abort());
+
+    if(rc_thread_check_abort()) {
+        rc = PLCTAG_ERR_ABORT;
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error sending session registration request!");
         return rc;
     }
 
     /* reset the buffer so that we can read in data. */
     bytebuf_reset(plc->data);
 
-    rc = receive_eip_packet(plc->sock, plc->data);
+    do {
+        rc = receive_eip_packet(plc->sock, plc->data);
+        if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+            pdebug(DEBUG_WARN,"Unable to read in response packet!");
+            return rc;
+        }
+    } while(rc == PLCTAG_STATUS_PENDING && !rc_thread_check_abort());
+
+    if(rc_thread_check_abort()) {
+        rc = PLCTAG_ERR_ABORT;
+    }
+
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to read in response packet!");
+        pdebug(DEBUG_WARN,"Error receiving session registration response!");
         return rc;
     }
 
@@ -927,7 +1001,7 @@ int register_plc(logix_plc_p plc)
     bytebuf_set_cursor(plc->data, 0);
 
     /* parse the header. */
-    rc = unmarshal_eip_header(plc->data, &command, &length, &plc_handle, &status, &sender_context, &options);
+    rc = unmarshal_eip_header(plc->data, &command, &length, &session_handle, &status, &sender_context);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Error parsing EIP encapsulation header!");
         return rc;
@@ -949,10 +1023,10 @@ int register_plc(logix_plc_p plc)
      * after all that, save the plc handle, we will
      * use it in future packets.
      */
-    plc->plc_handle = plc_handle;
+    plc->session_handle = session_handle;
     plc->status = PLCTAG_STATUS_OK;
 
-    pdebug(DEBUG_DETAIL,"Using plc handle %x.", plc_handle);
+    pdebug(DEBUG_DETAIL,"Using plc handle %x.", session_handle);
 
     pdebug(DEBUG_INFO, "Done.");
 
@@ -969,6 +1043,7 @@ int register_plc(logix_plc_p plc)
 logix_plc_p create_plc(const char *path)
 {
     logix_plc_p plc = NULL;
+    logix_request_p req = NULL;
     int rc = PLCTAG_STATUS_OK;
 
     plc = rc_alloc(sizeof(struct logix_plc_t), plc_destroy);
@@ -984,7 +1059,6 @@ logix_plc_p create_plc(const char *path)
     //~ plc->base.tag_write = tag_write;
 
     /* set the remaining PLC struct members. */
-    plc->resource_count = 1; /* MAGIC */
     plc->status = PLCTAG_STATUS_PENDING;
     plc->sock = NULL;
     plc->port = AB_EIP_DEFAULT_PORT;
@@ -996,7 +1070,7 @@ logix_plc_p create_plc(const char *path)
         return NULL;
     }
 
-    plc->data = bytebuf_create(550);  /* MAGIC */
+    plc->data = bytebuf_create(550, AB_BYTE_ORDER_INT16, AB_BYTE_ORDER_INT32, AB_BYTE_ORDER_INT64, AB_BYTE_ORDER_FLOAT32, AB_BYTE_ORDER_FLOAT64);  /* MAGIC */
     if(!plc->data) {
         pdebug(DEBUG_ERROR,"Unable to create plc buffer!");
         rc_dec(plc);
@@ -1336,7 +1410,7 @@ void request_destroy(void *request_arg, int extra_arg_count, void **extra_args)
 }
 
 
-tag_operation request_get_type(logix_request_p request)
+request_type request_get_type(logix_request_p request)
 {
     if(!request) {
         pdebug(DEBUG_WARN,"NULL request passed!");
@@ -1369,3 +1443,15 @@ int request_abort(logix_request_p request)
 
     return PLCTAG_STATUS_OK;
 }
+
+
+int request_get_abort(logix_request_p request)
+{
+    if(!request) {
+        pdebug(DEBUG_WARN,"NULL request passed!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    return (request->operation == REQUEST_ABORT);
+}
+
