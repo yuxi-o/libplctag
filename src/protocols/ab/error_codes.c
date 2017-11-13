@@ -171,7 +171,7 @@ const char *decode_cip_error(uint8_t primary_code, uint32_t secondary_code, int 
 
     while(error_code_table[index].primary_code != 0) {
         if(error_code_table[index].primary_code == primary_code) {
-            if(error_code_table[index].secondary_code == secondary_code || error_code_table[index].secondary_code == -1) {
+            if(error_code_table[index].secondary_code == secondary_code || error_code_table[index].secondary_code == 0) {
                 break;
             }
         }
