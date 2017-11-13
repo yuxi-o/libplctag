@@ -45,7 +45,6 @@ struct bytebuf_t {
 
 
 
-static int ensure_capacity(bytebuf_p buf, int new_cap);
 
 static int get_int(bytebuf_p buf, int size, uint32_t byte_order, int64_t *val);
 static int set_int(bytebuf_p buf, int size, uint32_t byte_order, int64_t val);
@@ -106,7 +105,7 @@ int bytebuf_set_cursor(bytebuf_p buf, int cursor)
     /* if the cursor went off the front end of the buffer, we need to expand accordingly. */
     new_cap = (cursor < 0 ? (buf->size + (-cursor)) : cursor+1);
 
-    if(!ensure_capacity(buf, new_cap) == PLCTAG_STATUS_OK) {
+    if(!bytebuf_set_capacity(buf, new_cap) == PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR, "Unable to expand byte buffer capacity!");
         return PLCTAG_ERR_NO_MEM;
     }
@@ -145,6 +144,51 @@ int bytebuf_get_cursor(bytebuf_p buf)
 
     return buf->cursor;
 }
+
+
+
+int bytebuf_set_capacity(bytebuf_p buf, int cap)
+{
+    uint8_t *bytes = NULL;
+    int new_cap = 0;
+
+    pdebug(DEBUG_SPEW,"Starting");
+
+    if(!buf) {
+        pdebug(DEBUG_WARN,"Called with null pointer!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    /* round cap up to CHUNK_SIZE */
+    new_cap = NEAREST_CHUNK(cap);
+
+    pdebug(DEBUG_SPEW,"New capacity request is %d from actual %d",new_cap, cap);
+
+    if(new_cap <= buf->capacity) {
+        pdebug(DEBUG_SPEW,"No need to allocate new buffer. Current buffer has capacity %d", buf->capacity);
+        return PLCTAG_STATUS_OK;
+    }
+
+    pdebug(DEBUG_SPEW,"Allocating more buffer space.");
+
+    /* need to allocate more memory */
+    bytes = mem_alloc(new_cap);
+    if(!bytes) {
+        pdebug(DEBUG_ERROR,"Unable to allocate new byte buffer bytes!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
+    mem_copy(bytes, &buf->bytes[0], buf->size);
+
+    mem_free(buf->bytes);
+
+    buf->bytes = bytes;
+
+    pdebug(DEBUG_SPEW,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
 
 
 
@@ -461,43 +505,6 @@ int bytebuf_destroy(bytebuf_p buf)
 
 
 
-int ensure_capacity(bytebuf_p buf, int cap)
-{
-    uint8_t *bytes = NULL;
-    int new_cap = 0;
-
-    pdebug(DEBUG_SPEW,"Starting");
-
-    /* round cap up to CHUNK_SIZE */
-    new_cap = NEAREST_CHUNK(cap);
-
-    pdebug(DEBUG_SPEW,"New capacity request is %d from actual %d",new_cap, cap);
-
-    if(new_cap <= buf->capacity) {
-        pdebug(DEBUG_SPEW,"No need to allocate new buffer. Current buffer has capacity %d", buf->capacity);
-        return PLCTAG_STATUS_OK;
-    }
-
-    pdebug(DEBUG_SPEW,"Allocating more buffer space.");
-
-    /* need to allocate more memory */
-    bytes = mem_alloc(new_cap);
-    if(!bytes) {
-        pdebug(DEBUG_ERROR,"Unable to allocate new byte buffer bytes!");
-        return PLCTAG_ERR_NO_MEM;
-    }
-
-    mem_copy(bytes, &buf->bytes[0], buf->size);
-
-    mem_free(buf->bytes);
-
-    buf->bytes = bytes;
-
-    pdebug(DEBUG_SPEW,"Done.");
-
-    return PLCTAG_STATUS_OK;
-}
-
 
 
 
@@ -556,7 +563,7 @@ int set_int(bytebuf_p buf, int size, uint32_t bo, int64_t val)
     }
 
     /* make sure we have the capacity to set this int */
-    if(!ensure_capacity(buf, buf->cursor + size) == PLCTAG_STATUS_OK) {
+    if(!bytebuf_set_capacity(buf, buf->cursor + size) == PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR, "Unable to expand byte buffer capacity!");
         return PLCTAG_ERR_NO_MEM;
     }

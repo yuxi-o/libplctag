@@ -30,7 +30,6 @@ extern bytebuf_p bytebuf_create(int initial_cap, uint32_t int16_bo, uint32_t int
 extern int bytebuf_set_cursor(bytebuf_p buf, int cursor);
 extern int bytebuf_get_cursor(bytebuf_p buf);
 extern int bytebuf_set_capacity(bytebuf_p buf, int capacity);
-extern int bytebuf_get_capacity(bytebuf_p buf);
 extern int bytebuf_get_size(bytebuf_p buf);
 extern uint8_t *bytebuf_get_buffer(bytebuf_p buf);
 extern int bytebuf_reset(bytebuf_p buf);
