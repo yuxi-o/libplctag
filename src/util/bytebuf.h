@@ -22,6 +22,7 @@
 #define __UTIL_BYTEBUF_H__
 
 #include <stdint.h>
+#include <util/macros.h>
 #include <util/refcount.h>
 
 typedef struct bytebuf_t *bytebuf_p;
@@ -53,5 +54,15 @@ extern int bytebuf_set_float32(bytebuf_p buf, float val);
 
 extern int bytebuf_get_float64(bytebuf_p buf, double *val);
 extern int bytebuf_set_float64(bytebuf_p buf, double val);
+
+typedef enum {BB_I8, BB_U8, BB_I16, BB_U16, BB_I32, BB_U32, BB_I64, BB_U64, BB_F32, BB_F64 } bytebuf_arg_type;
+
+#define bytebuf_marshal(buf, ...) bytebuf_marshal_impl(buf, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
+extern int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...);
+
+#define bytebuf_unmarshal(buf, ...) bytebuf_marshal_impl(buf, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
+extern int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...);
+
+
 
 #endif
