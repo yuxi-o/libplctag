@@ -91,7 +91,7 @@ int resource_put(const char *name, void * resource)
     }
 
     /* set up clean up function on resource. */
-    rc = rc_register_cleanup(resource, resource_data_cleanup, 1, dup_name);
+    rc = rc_register_cleanup(resource, resource_data_cleanup, dup_name);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to add cleanup function to resource!");
         mem_free(dup_name);
