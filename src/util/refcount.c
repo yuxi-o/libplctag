@@ -97,7 +97,7 @@ void *rc_alloc_impl(const char *func, int line_num, int data_size, int extra_arg
 
     pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
 
-    pdebug(DEBUG_DETAIL,"Allocating %d-byte refcount struct",(int)sizeof(struct refcount_t));
+    pdebug(DEBUG_SPEW,"Allocating %d-byte refcount struct",(int)sizeof(struct refcount_t));
 
     rc = mem_alloc(sizeof(struct refcount_t) + data_size);
     if(!rc) {
