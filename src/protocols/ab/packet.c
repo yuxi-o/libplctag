@@ -152,55 +152,43 @@ int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *length, uin
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    UNMARSHAL_FIELD(buf, 16, command);
-    //~ rc = bytebuf_get_int(buf, 2, byte_order_16, &val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error getting command field!");
-        //~ return rc;
-    //~ }
-    //~ *command = (uint16_t)(int16_t)val;
+    rc = bytebuf_get_int16(buf, (int16_t*)command);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting command field!");
+        return rc;
+    }
 
-    UNMARSHAL_FIELD(buf, 16, length);
-    //~ rc = bytebuf_get_int(buf, 2, byte_order_16, &val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error getting length field!");
-        //~ return rc;
-    //~ }
-    //~ *length = (uint16_t)(int16_t)val;
+    rc = bytebuf_get_int16(buf, (int16_t*)length);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting length field!");
+        return rc;
+    }
 
-    UNMARSHAL_FIELD(buf, 32, session_handle);
-    //~ rc = bytebuf_get_int(buf, 4, byte_order_32, &val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error getting session handle field!");
-        //~ return rc;
-    //~ }
-    //~ *session_handle = (uint32_t)(int32_t)val;
+    rc = bytebuf_get_int32(buf, (int32_t*)session_handle);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting session handle field!");
+        return rc;
+    }
 
-    UNMARSHAL_FIELD(buf, 32, status);
-    //~ rc = bytebuf_get_int(buf, 4, byte_order_32, &val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error getting status field!");
-        //~ return rc;
-    //~ }
-    //~ *status = (uint32_t)(int32_t)val;
+    rc = bytebuf_get_int32(buf, (int32_t*)status);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting status field!");
+        return rc;
+    }
 
-    UNMARSHAL_FIELD(buf, 64, sender_context);
-    //~ rc = bytebuf_get_int(buf, 8, byte_order_64, &val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error getting sender context field!");
-        //~ return rc;
-    //~ }
-    //~ *sender_context = (uint64_t)val;
+    rc = bytebuf_get_int64(buf, (int64_t*)sender_context);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting sender context field!");
+        return rc;
+    }
 
-    UNMARSHAL_FIELD(buf, 32, (int32_t*)&options);
-    //~ rc = bytebuf_get_int(buf, 4, byte_order_32, &val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error getting options field!");
-        //~ return rc;
-    //~ }
-    //~ *options = (uint32_t)(int32_t)val;
+    rc = bytebuf_get_int32(buf, (int32_t*)&options);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error getting options field!");
+        return rc;
+    }
 
-    if(status != AB_EIP_OK) {
+    if(*status != AB_EIP_OK) {
         pdebug(DEBUG_WARN,"Remote EIP error %d", status);
         return PLCTAG_ERR_REMOTE_ERR;
     }
@@ -785,7 +773,7 @@ int send_eip_packet(sock_p sock, bytebuf_p payload)
         return rc;
     }
 
-    bytebuf_set_cursor(payload, offset + rc);
+    rc = bytebuf_set_cursor(payload, offset + rc);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Error setting buffer cursor!");
         return rc;
@@ -802,7 +790,10 @@ int send_eip_packet(sock_p sock, bytebuf_p payload)
     return rc;
 }
 
-
+/*
+ * FIXME - refactor this turkey so that it does not take multiple tries to
+ * get a packet.
+ */
 
 int receive_eip_packet(sock_p sock, bytebuf_p buf)
 {
@@ -811,7 +802,7 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
     int data_needed = EIP_ENCAP_SIZE;
     int got_header = 0;
 
-    pdebug(DEBUG_DETAIL,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     /* how much have we read so far? */
     total_read = bytebuf_get_size(buf);
@@ -835,6 +826,9 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
             return rc;
         }
 
+        pdebug(DEBUG_DETAIL,"Received packet:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
+
         /* parse the header. */
         rc = unmarshal_eip_header(buf, &command, &length, &session_handle, &status, &sender_context);
         if(rc != PLCTAG_STATUS_OK) {
@@ -843,6 +837,8 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
         }
 
         data_needed = EIP_ENCAP_SIZE + (int)length;
+
+        pdebug(DEBUG_DETAIL,"Got header, size of payload = %d", data_needed);
 
         if(length == 0) {
             rc = PLCTAG_STATUS_OK;
@@ -865,7 +861,7 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
         return rc;
     }
 
-    rc = socket_read(sock, bytebuf_get_buffer(buf) + total_read,
+    rc = socket_read(sock, bytebuf_get_buffer(buf),
                      data_needed - total_read);
 
     /* was there an error? */
@@ -877,15 +873,22 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
         }
 
         return PLCTAG_STATUS_PENDING;
-    } else {
-        /* there was new data. */
-        total_read += rc;
-
-        pdebug(DEBUG_DETAIL,"Got %d more bytes of data.", rc);
     }
 
-    /* set the cursor to the end of the data. */
+    /* we got data or at least no error. */
+    total_read += rc;
+
+    pdebug(DEBUG_DETAIL,"Got %d more bytes of data.", rc);
+
+    /* set the cursor to the end of the data to set the size. */
     rc = bytebuf_set_cursor(buf, total_read);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set cursor!");
+        return rc;
+    }
+
+    /* set the cursor back to zero to allow for any decoding. */
+    rc = bytebuf_set_cursor(buf, 0);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set cursor!");
         return rc;

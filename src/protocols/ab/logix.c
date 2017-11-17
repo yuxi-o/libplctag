@@ -135,7 +135,7 @@ int logix_tag_create(tag_p tag)
     }
 
     path = attr_get_str(attribs,"path",NULL);
-    if(!path || str_length(path)) {
+    if(!path || !str_length(path)) {
         pdebug(DEBUG_WARN,"PLC path is missing or empty!");
         return PLCTAG_ERR_BAD_PARAM;
     }
@@ -545,7 +545,7 @@ void plc_monitor(int arg_count, void **args)
 
     if(arg_count != 1) {
         pdebug(DEBUG_WARN,"Arg count should be 1 and is %d", arg_count);
-        return;
+        //return;
     }
 
     plc = args[0];
