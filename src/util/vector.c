@@ -42,7 +42,7 @@ vector_p vector_create(int capacity, int max_inc)
 {
     vector_p vec = NULL;
 
-    pdebug(DEBUG_INFO,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     if(capacity <= 0) {
         pdebug(DEBUG_WARN, "Called with negative capacity!");
@@ -71,7 +71,7 @@ vector_p vector_create(int capacity, int max_inc)
         return NULL;
     }
 
-    pdebug(DEBUG_INFO,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return vec;
 }
@@ -157,7 +157,7 @@ void * vector_remove(vector_p vec, int index)
 {
     void * result = NULL;
 
-    pdebug(DEBUG_DETAIL,"Starting");
+    pdebug(DEBUG_SPEW,"Starting");
 
     /* check to see if the vector ref is valid */
     if(!vec) {
@@ -182,7 +182,7 @@ void * vector_remove(vector_p vec, int index)
     /* adjust the length to the new size */
     vec->len--;
 
-    pdebug(DEBUG_DETAIL,"Done");
+    pdebug(DEBUG_SPEW,"Done");
 
     return result;
 }
@@ -191,7 +191,7 @@ void * vector_remove(vector_p vec, int index)
 
 int vector_destroy(vector_p vec)
 {
-    pdebug(DEBUG_INFO,"Starting.");
+    pdebug(DEBUG_SPEW,"Starting.");
 
     if(!vec) {
         pdebug(DEBUG_WARN,"Null pointer passed!");
@@ -201,7 +201,7 @@ int vector_destroy(vector_p vec)
     mem_free(vec->data);
     mem_free(vec);
 
-    pdebug(DEBUG_INFO,"Done.");
+    pdebug(DEBUG_SPEW,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
