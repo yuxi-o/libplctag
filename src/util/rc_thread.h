@@ -26,8 +26,8 @@
 typedef struct rc_thread_t *rc_thread_p;
 typedef void (*rc_thread_func)(int arg_count, void **args);
 
-#define rc_thread_create(func, ...) rc_thread_create_impl((COUNT_NARG(__VA_ARGS__)-1), func,  __VA_ARGS__)
-extern rc_thread_p rc_thread_create_impl(int arg_count, rc_thread_func func, ...);
+#define rc_thread_create(func, ...) rc_thread_create_impl(func, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
+extern rc_thread_p rc_thread_create_impl(rc_thread_func func, int arg_count, ...);
 extern int rc_thread_abort(rc_thread_p thread);
 extern int rc_thread_check_abort(void);
 

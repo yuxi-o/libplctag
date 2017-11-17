@@ -61,7 +61,7 @@ static THREAD_FUNC(reaper_thread_handler);
 
 
 
-rc_thread_p rc_thread_create_impl(int arg_count, rc_thread_func func, ...)
+rc_thread_p rc_thread_create_impl(rc_thread_func func, int arg_count, ...)
 {
     va_list va;
     rc_thread_p result = NULL;
@@ -87,7 +87,7 @@ rc_thread_p rc_thread_create_impl(int arg_count, rc_thread_func func, ...)
     impl->args = (void **)(impl+1); /* point past the thread struct. */
 
     /* fill in the extra args. */
-    va_start(va, func);
+    va_start(va, arg_count);
     for(int i=0; i < impl->arg_count; i++) {
         impl->args[i] = va_arg(va, void *);
     }
