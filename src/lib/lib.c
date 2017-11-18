@@ -812,7 +812,11 @@ LIB_EXPORT uint8_t plc_tag_get_uint8(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int8(tag->data, (int8_t*)&res);
+                rc = bytebuf_unmarshal(tag->data, BB_U8, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -858,7 +862,11 @@ LIB_EXPORT int plc_tag_set_uint8(tag_id id, int offset, uint8_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int8(tag->data, (int8_t)val);
+                rc = bytebuf_marshal(tag->data, BB_U8, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -903,7 +911,11 @@ LIB_EXPORT int8_t plc_tag_get_int8(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int8(tag->data, &res);
+                rc = bytebuf_unmarshal(tag->data, BB_I8, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -948,8 +960,12 @@ LIB_EXPORT int plc_tag_set_int8(tag_id id, int offset, int8_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int8(tag->data, val);
-            }
+                rc = bytebuf_marshal(tag->data, BB_I8, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
+           }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
         }
@@ -995,7 +1011,11 @@ LIB_EXPORT uint16_t plc_tag_get_uint16(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int16(tag->data, (int16_t*)&res);
+                rc = bytebuf_unmarshal(tag->data, BB_U16, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1040,7 +1060,11 @@ LIB_EXPORT int plc_tag_set_uint16(tag_id id, int offset, uint16_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int16(tag->data, (int16_t)val);
+                rc = bytebuf_marshal(tag->data, BB_U16, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1083,7 +1107,11 @@ LIB_EXPORT int16_t plc_tag_get_int16(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int16(tag->data, &res);
+                rc = bytebuf_unmarshal(tag->data, BB_I16, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1129,7 +1157,11 @@ LIB_EXPORT int plc_tag_set_int16(tag_id id, int offset, int16_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int16(tag->data, val);
+                rc = bytebuf_marshal(tag->data, BB_I16, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1175,8 +1207,12 @@ LIB_EXPORT uint32_t plc_tag_get_uint32(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int32(tag->data, (int32_t*)&res);
-            }
+                rc = bytebuf_unmarshal(tag->data, BB_U32, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
+           }
         }
     }
 
@@ -1220,7 +1256,11 @@ LIB_EXPORT int plc_tag_set_uint32(tag_id id, int offset, uint32_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int32(tag->data, (int32_t)val);
+                rc = bytebuf_marshal(tag->data, BB_U32, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1263,7 +1303,11 @@ LIB_EXPORT int32_t plc_tag_get_int32(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int32(tag->data, &res);
+                rc = bytebuf_unmarshal(tag->data, BB_I32, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1308,7 +1352,11 @@ LIB_EXPORT int plc_tag_set_int32(tag_id id, int offset, int32_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int32(tag->data, val);
+                rc = bytebuf_marshal(tag->data, BB_I32, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1353,7 +1401,11 @@ LIB_EXPORT uint64_t plc_tag_get_uint64(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int64(tag->data, (int64_t*)&res);
+                rc = bytebuf_unmarshal(tag->data, BB_U64, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1397,7 +1449,11 @@ LIB_EXPORT int plc_tag_set_uint64(tag_id id, int offset, uint64_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int64(tag->data, (int64_t)val);
+                rc = bytebuf_marshal(tag->data, BB_U64, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1439,7 +1495,11 @@ LIB_EXPORT int64_t plc_tag_get_int64(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_int64(tag->data, &res);
+                rc = bytebuf_unmarshal(tag->data, BB_I64, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1484,7 +1544,11 @@ LIB_EXPORT int plc_tag_set_int64(tag_id id, int offset, int64_t val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_int64(tag->data, val);
+                rc = bytebuf_marshal(tag->data, BB_I64, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1529,7 +1593,11 @@ LIB_EXPORT float plc_tag_get_float32(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_float32(tag->data, &res);
+                rc = bytebuf_unmarshal(tag->data, BB_F32, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1574,7 +1642,11 @@ LIB_EXPORT int plc_tag_set_float32(tag_id id, int offset, float val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_float32(tag->data, val);
+                rc = bytebuf_marshal(tag->data, BB_F32, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
@@ -1624,7 +1696,11 @@ LIB_EXPORT double plc_tag_get_float64(tag_id id, int offset)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_get_float64(tag->data, &res);
+                rc = bytebuf_unmarshal(tag->data, BB_F64, &res);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         }
     }
@@ -1669,7 +1745,11 @@ LIB_EXPORT int plc_tag_set_float64(tag_id id, int offset, double val)
             rc = bytebuf_set_cursor(tag->data, offset);
 
             if(rc == PLCTAG_STATUS_OK) {
-                rc = bytebuf_set_float64(tag->data, val);
+                rc = bytebuf_marshal(tag->data, BB_F64, val);
+
+                if(rc > 0) {
+                    rc = PLCTAG_STATUS_OK;
+                }
             }
         } else {
             rc = PLCTAG_ERR_OUT_OF_BOUNDS;
