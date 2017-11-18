@@ -71,8 +71,6 @@ int marshal_eip_header(int prev_rc, bytebuf_p buf,
 {
     int rc = PLCTAG_STATUS_OK;
     uint16_t payload_size;
-    uint32_t status = 0;
-    uint32_t options = 0;
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
@@ -82,110 +80,57 @@ int marshal_eip_header(int prev_rc, bytebuf_p buf,
 
     payload_size = bytebuf_get_size(buf);
 
-    /* make space at the beginning of the buffer. */
-    rc = bytebuf_set_cursor(buf, -24); /* FIXME - MAGIC */
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error setting buffer cursor!");
-        return rc;
+    /* two calls, first gets size, second writes data. */
+    for(int i=0; i < 2; i++) {
+        rc = bytebuf_marshal(i == 0 ? NULL : buf ,
+                             BB_U16, command,
+                             BB_U16, payload_size,
+                             BB_U32, session_handle,
+                             BB_U32, (uint32_t)0,   /* status, always sent as zero */
+                             BB_U64, sender_context,
+                             BB_U32, (uint32_t)0    /* options, always zero. */
+                            );
+        if(i == 0 && rc > 0) {
+            /* make space at the beginning of the buffer. */
+            rc = bytebuf_set_cursor(buf, - rc); /* rc contains the header size. */
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Error setting buffer cursor!");
+                return rc;
+            }
+        }
     }
 
-    /* command */
-    MARSHAL_FIELD(buf, 16, command);
-    //~ rc = bytebuf_set_int(buf, 2, byte_order_16, (int64_t)command);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting command field!");
-        //~ return rc;
-    //~ }
-
-    /* payload length */
-    MARSHAL_FIELD(buf, 16, payload_size);
-    //~ rc = bytebuf_set_int(buf, 2, byte_order_16, (int64_t)payload_size);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting payload size field!");
-        //~ return rc;
-    //~ }
-
-    /* session handle */
-    MARSHAL_FIELD(buf, 32, session_handle);
-    //~ rc = bytebuf_set_int(buf, 4, byte_order_32, (int64_t)session_handle);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting session handle field!");
-        //~ return rc;
-    //~ }
-
-    /* status, always zero on send */
-    status = 0;
-    MARSHAL_FIELD(buf, 32, status);
-    //~ bytebuf_set_int(buf, 4, byte_order_32, (int64_t)0);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting status field!");
-        //~ return rc;
-    //~ }
-
-    /* session packet identifier */
-    MARSHAL_FIELD(buf, 64, sender_context);
-    //~ rc = bytebuf_set_int(buf, 8, byte_order_64, (int64_t)sender_context);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting sender context field!");
-        //~ return rc;
-    //~ }
-
-    /* options, zero always? */
-    options = 0;
-    MARSHAL_FIELD(buf, 32, options);
-    //~ rc = bytebuf_set_int(buf, 4, byte_order_32, (int64_t)0);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting options field!");
-        //~ return rc;
-    //~ }
+    if(rc > 0) {
+        rc = PLCTAG_STATUS_OK;
+    }
 
     pdebug(DEBUG_DETAIL,"Done.");
 
-    return PLCTAG_STATUS_OK;
+    return rc;
 }
 
 
-int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *length, uint32_t *session_handle, uint32_t *status, uint64_t *sender_context)
+int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *payload_size, uint32_t *session_handle, uint32_t *status, uint64_t *sender_context)
 {
     int rc = PLCTAG_STATUS_OK;
     uint32_t options;
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    rc = bytebuf_get_int16(buf, (int16_t*)command);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error getting command field!");
-        return rc;
-    }
+    /* set this in case the unmarshalling fails. */
+    *status = AB_EIP_OK;
 
-    rc = bytebuf_get_int16(buf, (int16_t*)length);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error getting length field!");
-        return rc;
-    }
+    rc = bytebuf_unmarshal(buf ,
+                            BB_U16, command,
+                            BB_U16, payload_size,
+                            BB_U32, session_handle,
+                            BB_U32, status,
+                            BB_U64, sender_context,
+                            BB_U32, &options    /* throw away */
+                            );
 
-    rc = bytebuf_get_int32(buf, (int32_t*)session_handle);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error getting session handle field!");
-        return rc;
-    }
-
-    rc = bytebuf_get_int32(buf, (int32_t*)status);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error getting status field!");
-        return rc;
-    }
-
-    rc = bytebuf_get_int64(buf, (int64_t*)sender_context);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error getting sender context field!");
-        return rc;
-    }
-
-    rc = bytebuf_get_int32(buf, (int32_t*)&options);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error getting options field!");
-        return rc;
+    if(rc > 0) {
+        rc == PLCTAG_STATUS_OK;
     }
 
     if(*status != AB_EIP_OK) {
@@ -205,25 +150,18 @@ int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t optio
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
-    /* requested protocol version */
-    MARSHAL_FIELD(buf, 16, eip_version);
-    //~ rc = bytebuf_set_int(buf, 2, byte_order_16, (int64_t)eip_version);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting eip_version field!");
-        //~ return rc;
-    //~ }
+    rc = bytebuf_marshal(buf,
+                        BB_U16, eip_version,
+                        BB_U16, option_flags
+                        );
 
-    /* option flags, always zero? */
-    MARSHAL_FIELD(buf, 16, option_flags);
-    //~ bytebuf_set_int(buf, 2, byte_order_16, (int64_t)option_flags);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_WARN,"Error inserting option_flags field!");
-        //~ return rc;
-    //~ }
+    if(rc > 0) {
+        rc = PLCTAG_STATUS_OK;
+    }
 
     pdebug(DEBUG_DETAIL,"Done.");
 
-    return PLCTAG_STATUS_OK;
+    return rc;
 }
 
 
@@ -249,65 +187,20 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     */
 
     int rc = PLCTAG_STATUS_OK;
+    uint8_t req_path[] = {0x20, 0x6B, 0x26, 0x00};
 
-    rc = bytebuf_set_int8(buf, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service command!");
-        return rc;
-    }
+    rc = bytebuf_marshal(buf,
+                        BB_U8, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST, /* request service */
+                        BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
+                        BB_BYTES, req_path, ((sizeof(req_path)/sizeof(req_path[0])),
+                        BB_U32, start_instance,
+                        BB_U16, (uint16_t)2, /* get two attributes. */
+                        BB_U16, 0x1, /* MAGIC - attribute #1 is the symbol name. */
+                        BB_U16, 0x2  /* MAGIC - attribute #2 is the symbol type. */
+                        );
 
-    rc = bytebuf_set_int8(buf, (int8_t)0x03);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service path length!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int8(buf, (int8_t)0x20);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service path byte!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int8(buf, (int8_t)0x6B);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service path byte!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int8(buf, (int8_t)0x26);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service path byte!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int8(buf, (int8_t)0x00);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service path byte!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int32(buf, (int32_t)start_instance);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service start instance!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int16(buf, (int16_t)0x02);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service start instance!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int16(buf, (int16_t)0x01);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service start instance!");
-        return rc;
-    }
-
-    rc = bytebuf_set_int16(buf, (int16_t)0x02);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to insert Get Attribute List service start instance!");
-        return rc;
+    if(rc > 0) {
+        rc =PLCTAG_STATUS_OK;
     }
 
     return rc;
