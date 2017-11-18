@@ -37,25 +37,7 @@ extern int bytebuf_reset(bytebuf_p buf);
 extern int bytebuf_destroy(bytebuf_p buf);
 
 /* data accessors */
-extern int bytebuf_get_int8(bytebuf_p buf, int8_t *val);
-extern int bytebuf_set_int8(bytebuf_p buf, int8_t val);
-
-extern int bytebuf_get_int16(bytebuf_p buf, int16_t *val);
-extern int bytebuf_set_int16(bytebuf_p buf, int16_t val);
-
-extern int bytebuf_get_int32(bytebuf_p buf, int32_t *val);
-extern int bytebuf_set_int32(bytebuf_p buf, int32_t val);
-
-extern int bytebuf_get_int64(bytebuf_p buf, int64_t *val);
-extern int bytebuf_set_int64(bytebuf_p buf, int64_t val);
-
-extern int bytebuf_get_float32(bytebuf_p buf, float *val);
-extern int bytebuf_set_float32(bytebuf_p buf, float val);
-
-extern int bytebuf_get_float64(bytebuf_p buf, double *val);
-extern int bytebuf_set_float64(bytebuf_p buf, double val);
-
-typedef enum {BB_I8, BB_U8, BB_I16, BB_U16, BB_I32, BB_U32, BB_I64, BB_U64, BB_F32, BB_F64 } bytebuf_arg_type;
+typedef enum {BB_I8, BB_U8, BB_I16, BB_U16, BB_I32, BB_U32, BB_I64, BB_U64, BB_F32, BB_F64, BB_BYTES } bytebuf_arg_type;
 
 #define bytebuf_marshal(buf, ...) bytebuf_marshal_impl(buf, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
 extern int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...);
