@@ -130,7 +130,7 @@ int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *payload_siz
                             );
 
     if(rc > 0) {
-        rc == PLCTAG_STATUS_OK;
+        rc = PLCTAG_STATUS_OK;
     }
 
     if(*status != AB_EIP_OK) {
@@ -192,7 +192,7 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     rc = bytebuf_marshal(buf,
                         BB_U8, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST, /* request service */
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
-                        BB_BYTES, req_path, ((sizeof(req_path)/sizeof(req_path[0])),
+                        BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
                         BB_U32, start_instance,
                         BB_U16, (uint16_t)2, /* get two attributes. */
                         BB_U16, 0x1, /* MAGIC - attribute #1 is the symbol name. */
@@ -216,8 +216,8 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count)
     int rc = PLCTAG_STATUS_OK;
 
     /* inject the read command byte */
-    rc = bytebuf_set_int8(buf, AB_CIP_READ);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ);
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set CIP command to read in buffer!");
         return rc;
     }
@@ -230,10 +230,12 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count)
     }
 
     /* set the element count to read. */
-    rc = bytebuf_set_int16(buf, (int16_t)elem_count);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_marshal(buf, BB_U16, (uint16_t)elem_count);
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set number of elements to read!");
         return rc;
+    } else {
+        rc = PLCTAG_STATUS_OK;
     }
 
     return rc;
@@ -253,28 +255,28 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf)
     }
 
     /* eat the type info. */
-    rc = bytebuf_get_int8(buf, (int8_t*)&type_byte);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_unmarshal(buf, BB_U8, &type_byte);
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to get type byte!");
         return rc;
     }
 
     /* check for a simple/base type */
     if (type_byte >= AB_CIP_DATA_BIT && type_byte <= AB_CIP_DATA_STRINGI) {
-        /* skip the type byte and zero length byte */
-        rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + 2);
+        /* skip the type byte and length byte */
+        rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + 1);
     } else if (type_byte == AB_CIP_DATA_ABREV_STRUCT || type_byte == AB_CIP_DATA_ABREV_ARRAY ||
                type_byte == AB_CIP_DATA_FULL_STRUCT || type_byte == AB_CIP_DATA_FULL_ARRAY) {
         /* this is an aggregate type of some sort, the type info is variable length */
 
         /* get the type length byte */
-        rc = bytebuf_get_int8(buf, (int8_t*)&type_length_byte);
-        if(rc != PLCTAG_STATUS_OK) {
+        rc = bytebuf_unmarshal(buf, BB_U8, &type_length_byte);
+        if(rc < PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to get type length byte!");
             return rc;
         }
 
-        /* skip past the type data */
+        /* skip past the type data, does the type length include the type byte and length byte? */
         rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + (int)type_length_byte);
     } else {
         pdebug(DEBUG_WARN, "Unsupported data type returned, type byte=%d", (int)type_byte);
@@ -308,9 +310,8 @@ int unmarshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data)
 int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
 {
     int rc = PLCTAG_STATUS_OK;
-    uint8_t mr_path[] = { 0x02, 0x20, 0x06, 0x24, 0x01 }; /* length in words, path to CM */
+    uint8_t mr_path[] = { 0x20, 0x06, 0x24, 0x01 }; /* path to CM */
     int cip_command_length = 0;
-    int header_length = 0;
 
     /*
 
@@ -340,55 +341,35 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
     /* save this for later. */
     cip_command_length = bytebuf_get_size(buf);
 
-    /* calculate header length */
-    header_length =  1 /* cm_service_code */
-                    + (int)(sizeof(mr_path)/sizeof(mr_path[0])) /* path plus length. */
-                    + 1 /* secs_per_tick */
-                    + 1 /* timeout_ticks */
-                    + 2 /* uc_cmd_length */
-                    ;
+    /* two calls, first gets size, second writes data. */
+    for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
+        rc = bytebuf_marshal(i == 0 ? NULL : buf ,
+                             BB_U8, AB_CIP_CMD_UNCONNECTED_SEND,
+                             BB_U8, (uint8_t)((sizeof(mr_path)/sizeof(mr_path[0])) / 2), /*length of path in 16-bit words*/
+                             BB_BYTES, mr_path, (sizeof(mr_path)/sizeof(mr_path[0])),
+                             BB_U8, (uint8_t)AB_CIP_SECS_PER_TICK,
+                             BB_U8, (uint8_t)AB_CIP_TIMEOUT_TICKS,
+                             BB_U16, (uint16_t)cip_command_length
+                             );
+        if(i == 0 && rc > 0) {
+            /* make space at the beginning of the buffer. */
+            pdebug(DEBUG_DETAIL,"Making %d bytes of space at the beginning for the header.", rc);
+            rc = bytebuf_set_cursor(buf, - rc); /* rc contains the header size. */
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Error setting buffer cursor!");
+                return rc;
+            }
 
-    /* make space at the beginning of the packet. */
-    rc = bytebuf_set_cursor(buf, - header_length);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to make space at start of packet for header!");
-        return rc;
-    }
-
-    /* set up the command. */
-    rc = bytebuf_set_int8(buf, AB_CIP_CMD_UNCONNECTED_SEND);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set MR command!");
-        return rc;
-    }
-
-    /* copy the Connection Manager route into the packet. */
-    for(int i=0; i < (int)(sizeof(mr_path)/sizeof(mr_path[0])); i++) {
-        rc = bytebuf_set_int8(buf, (int8_t)mr_path[i]);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to set CM path!");
-            return rc;
+            rc = PLCTAG_STATUS_OK;
         }
     }
 
-    /* Unconnected send seconds per tick */
-    rc = bytebuf_set_int8(buf, (int8_t)AB_CIP_SECS_PER_TICK);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set CM path length!");
-        return rc;
+    if(rc > 0) {
+        rc = PLCTAG_STATUS_OK;
     }
 
-    /* timeout ticks, not sure if this is used. */
-    rc = bytebuf_set_int8(buf, (int8_t)AB_CIP_TIMEOUT_TICKS);
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set CM path length!");
-        return rc;
-    }
-
-    /* Embedded packet size.  In bytes */
-    rc = bytebuf_set_int16(buf, (int16_t)cip_command_length);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set CIP command length!");
+        pdebug(DEBUG_WARN,"Unable to marshal header!");
         return rc;
     }
 
@@ -418,7 +399,8 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
 int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status)
 {
     int rc = PLCTAG_STATUS_OK;
-    int8_t dummy_byte;
+    uint8_t dummy_byte = 0;
+    uint8_t status_words = 0;
 
     /*
     The CM Unconnected reply packet looks like this:
@@ -438,38 +420,31 @@ int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_serv
         return rc;
     }
 
-    /* get the reply service. */
-    rc = bytebuf_get_int8(buf, (int8_t*)reply_service);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get reply service!");
-        return rc;
+    /* get the main part of the header. */
+    rc = bytebuf_unmarshal(buf,
+                     BB_U8, reply_service,
+                     BB_U8, &dummy_byte,
+                     BB_U8, status,
+                     BB_U8, &status_words
+                     );
+
+    if(rc > 0) {
+        rc = PLCTAG_STATUS_OK;
     }
 
-    /* get the reserved word */
-    rc = bytebuf_get_int8(buf, &dummy_byte);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get reserved byte!");
-        return rc;
-    }
-
-    /* get the status byte. */
-    rc = bytebuf_get_int8(buf, (int8_t*)status);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get reply status!");
-        return rc;
-    }
-
-    /* get the number of extra status words. */
-    rc = bytebuf_get_int8(buf, &dummy_byte);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get reserved byte!");
+    if(rc !=  PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to unmarshal reply header!");
         return rc;
     }
 
     /* check the status. */
     if(*status != AB_CIP_STATUS_OK && *status != AB_CIP_STATUS_FRAG) {
         /* get the extended status */
-        rc = bytebuf_get_int16(buf, (int16_t*)extended_status);
+        rc = bytebuf_unmarshal(buf, BB_U16,extended_status);
+        if(rc > 0) {
+            rc = PLCTAG_STATUS_OK;
+        }
+
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to get reply extended status!");
             return rc;
@@ -490,7 +465,6 @@ int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
 {
     int rc = PLCTAG_STATUS_OK;
     int payload_length = 0;
-    int header_size = 0;
 
     /*
         CPF header looks like this:
@@ -515,83 +489,39 @@ int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
         return rc;
     }
 
-    /* calculate header size */
-    header_size = 4 /* interface_handle */
-                + 2 /* router_timeout */
-                + 2 /* cpf_item_count */
-                + 2 /* cpf_nai_item_type */
-                + 2 /* cpf_nai_item_length */
-                + 2 /* cpf_udi_item_type */
-                + 2 /* cpf_udi_item_length */
-                ;
-
     /* get the payload size before we change the buffer. */
     payload_length = bytebuf_get_size(buf);
 
-    /*
-     * We arg going to inject the CPF header at the beginning of the packet.
-     */
+   /* two calls, first gets size, second writes data. */
+    for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
+        rc = bytebuf_marshal(i == 0 ? NULL : buf ,
+                             BB_U32, 0,     /* interface handle, apparently zero */
+                             BB_U16, (uint16_t)AB_DEFAULT_ROUTER_TIMEOUT_SECS,
+                             BB_U16, 2,     /* item count */
+                             BB_U16, (uint16_t)AB_CIP_ITEM_NAI,
+                             BB_U16, (uint16_t)0,   /* NULL address length is zero */
+                             BB_U16, (uint16_t)AB_CIP_ITEM_UDI,
+                             BB_U16, (uint16_t)payload_length
+                             );
+        if(i == 0 && rc > 0) {
+            /* make space at the beginning of the buffer. */
+            pdebug(DEBUG_DETAIL,"Making %d bytes of space at the beginning for the header.", rc);
+            rc = bytebuf_set_cursor(buf, - rc); /* rc contains the header size. */
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Error setting buffer cursor!");
+                return rc;
+            }
 
-    /* make space at the beginning of the packet. */
-    rc = bytebuf_set_cursor(buf, - header_size);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to make space at start of packet!");
-        return rc;
+            rc = PLCTAG_STATUS_OK;
+        }
     }
 
-    /* push the interface handle */
-    rc = bytebuf_set_int32(buf, (int32_t)0); /* this always 0 apparently. */
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set interface handle!");
-        return rc;
+    if(rc > 0) {
+        rc = PLCTAG_STATUS_OK;
     }
 
-    /* push the router timeout, usually a couple of seconds is good? */
-    rc = bytebuf_set_int16(buf, (int16_t)AB_DEFAULT_ROUTER_TIMEOUT_SECS); /*  */
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set interface handle!");
-        return rc;
-    }
-
-    /*
-     * Now we start the common packet format.
-     *
-     * This is a count of items followed by items.   Each item has an
-     * address part followed by a data part.
-     */
-
-    /* now do the data items. */
-    rc = bytebuf_set_int16(buf, (int16_t)2); /* Always two data items */
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set number of data items!");
-        return rc;
-    }
-
-    /* NULL/empty address type. */
-    rc = bytebuf_set_int16(buf, (int16_t)AB_CIP_ITEM_NAI);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set null address item type!");
-        return rc;
-    }
-
-    /* NULL/empty address length, always zero. */
-    rc = bytebuf_set_int16(buf, (int16_t)0);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set null address item length!");
-        return rc;
-    }
-
-    /* Unconnected data item type. */
-    rc = bytebuf_set_int16(buf, (int16_t)AB_CIP_ITEM_UDI);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set unconnected item type!");
-        return rc;
-    }
-
-    /* set the UDI item length, not including the length word itself. */
-    rc = bytebuf_set_int16(buf, (int16_t)payload_length);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set payload length!");
+        pdebug(DEBUG_WARN,"Unable to marshal header!");
         return rc;
     }
 
@@ -601,11 +531,18 @@ int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
 
 int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
 {
-    int header_size = 0;
+    int rc = PLCTAG_STATUS_OK;
+    uint32_t interface_handle;
+    uint16_t router_timeout;
+    uint16_t item_count;
+    uint16_t item_nai;
+    uint16_t item_nai_length;
+    uint16_t item_udi;
+    uint16_t payload_length;
 
     /* The CPF header on a reply looks like this:
         Interface Handle etc.
-    uint32_t interface_handle;      ALWAYS 0
+    uint32_t interface_handle;
     uint16_t router_timeout;
 
         Common Packet Format - CPF Unconnected
@@ -623,23 +560,22 @@ int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
         return prev_rc;
     }
 
-    /* calculate header size */
-    header_size = 4 /* interface_handle */
-                + 2 /* router_timeout */
-                + 2 /* cpf_item_count */
-                + 2 /* cpf_nai_item_type */
-                + 2 /* cpf_nai_item_length */
-                + 2 /* cpf_udi_item_type */
-                + 2 /* cpf_udi_item_length */
-                ;
+    rc = bytebuf_unmarshal(buf,
+                     BB_U32, &interface_handle,
+                     BB_U16, &router_timeout,
+                     BB_U16, &item_count,     /* item count, FIXME - should check this! */
+                     BB_U16, &item_nai,
+                     BB_U16, &item_nai_length,
+                     BB_U16, &item_udi,
+                     BB_U16, &payload_length
+                     );
 
-    /*
-     * there is not much to do here.   There is no status in the CPF header.
-     * Just move the cursor past the header data.
-     */
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal header!");
+        return rc;
+    }
 
-    /* move the cursor forward. */
-    return bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + header_size);
+    return PLCTAG_STATUS_OK;
 }
 
 
@@ -719,7 +655,7 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
             return rc;
         }
 
-        pdebug(DEBUG_DETAIL,"Received packet:");
+        pdebug(DEBUG_DETAIL,"Received partial packet with header:");
         pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
 
         /* parse the header. */
@@ -789,7 +725,7 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
 
     /* still getting data. */
     if(got_header && total_read == data_needed) {
-        pdebug(DEBUG_DETAIL,"Received packet:");
+        pdebug(DEBUG_DETAIL,"Received complete packet:");
         pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
 
         rc = PLCTAG_STATUS_OK;
@@ -835,8 +771,8 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
 
     /* get the index of the IOI length. */
     ioi_length_index = bytebuf_get_cursor(buf);
-    rc = bytebuf_set_int8(buf, 0); /* place holder */
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_marshal(buf, BB_U8, 0); /* place holder */
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Bad IOI path format to PLC!");
         mem_free(links);
         return rc;
@@ -854,7 +790,7 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
             return PLCTAG_ERR_BAD_PARAM;
         }
 
-        rc = bytebuf_set_int8(buf, (int8_t)tmp);
+        rc = bytebuf_marshal(buf, BB_U8, (uint8_t)tmp);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to inject new path element!");
             mem_free(links);
@@ -871,9 +807,9 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
 
     /* pad out the length */
     if(ioi_size & 0x01) {
-        rc = bytebuf_set_int8(buf, 0); /* place holder */
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Bad IOI path format to PLC!");
+        rc = bytebuf_marshal(buf, BB_U8, 0); /* place holder */
+        if(rc < PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to marshal padding byte!");
             return rc;
         }
 
@@ -888,9 +824,16 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
     }
 
     /* set the length.   NOTE: in 16-bit words! */
-    rc = bytebuf_set_int8(buf, (int8_t)(ioi_size/2));
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_marshal(buf, BB_U8, (uint8_t)(ioi_size/2));
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Bad IOI path format to PLC!");
+        return rc;
+    }
+
+    /* seek to the end of the buffer. */
+    rc = bytebuf_set_cursor(buf, bytebuf_get_size(buf));
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set buffer cursor to end of buffer!");
         return rc;
     }
 
@@ -942,8 +885,8 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
     word_count_index = bytebuf_get_cursor(buf);
 
     /* inject a place holder for the IOI string word count */
-    rc = bytebuf_set_int8(buf, 0);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_marshal(buf, BB_U8, 0);
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to inject placeholder for IOI size count!");
         return rc;
     }
@@ -969,23 +912,23 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
                 break;
 
             case NAME:
-                rc = bytebuf_set_int8(buf, (int8_t)0x91); /* MAGIC - symbolic segment. */
-                if(rc != PLCTAG_STATUS_OK) {
+                rc = bytebuf_marshal(buf, BB_U8, (uint8_t)0x91); /* MAGIC - symbolic segment. */
+                if(rc < PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Unable to inject symbol start!");
                     return rc;
                 }
 
                 /* inject place holder for the name length */
                 symbol_len_index = bytebuf_get_cursor(buf);
-                rc = bytebuf_set_int8(buf, 0);
-                if(rc != PLCTAG_STATUS_OK) {
+                rc = bytebuf_marshal(buf, BB_U8, 0);
+                if(rc < PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Unable to inject symbol segment length byte!");
                     return rc;
                 }
 
                 while(isalnum(*p) || *p == '_' || *p == ':') {
-                    rc = bytebuf_set_int8(buf, (int8_t)*p);
-                    if(rc != PLCTAG_STATUS_OK) {
+                    rc = bytebuf_marshal(buf, BB_U8, (uint8_t)*p);
+                    if(rc < PLCTAG_STATUS_OK) {
                         pdebug(DEBUG_WARN,"Unable to inject symbol character!");
                         return rc;
                     }
@@ -996,8 +939,8 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
 
                 /* must pad the name to a multiple of two bytes */
                 if(symbol_len & 0x01) {
-                    rc = bytebuf_set_int8(buf, 0);
-                    if(rc != PLCTAG_STATUS_OK) {
+                    rc = bytebuf_marshal(buf, BB_U8, 0);
+                    if(rc < PLCTAG_STATUS_OK) {
                         pdebug(DEBUG_WARN,"Unable to inject symbol padding!");
                         return rc;
                     }
@@ -1012,8 +955,8 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
                     return rc;
                 }
 
-                rc = bytebuf_set_int8(buf, (int8_t)symbol_len);
-                if(rc != PLCTAG_STATUS_OK) {
+                rc = bytebuf_marshal(buf, BB_U8, (uint8_t)symbol_len);
+                if(rc < PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Unable to set buffer cursor to write symbolic segment length byte!");
                     return rc;
                 }
@@ -1047,54 +990,60 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
                     p = np;
 
                     if(val > 0xFFFF) {
-                        rc = bytebuf_set_int8(buf, (int8_t)0x2A); /* MAGIC - numeric segment of 4 bytes */
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U8, 0x2A); /* MAGIC - numeric segment of 4 bytes */
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment type byte!");
                             return rc;
                         }
 
                         /* inject a padding byte. */
-                        rc = bytebuf_set_int8(buf, (int8_t)0); /* pad to even number of bytes. */
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U8, 0); /* pad to even number of bytes. */
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment type padding byte!");
                             return rc;
                         }
 
-                        rc = bytebuf_set_int32(buf, (int32_t)val);
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U32, val);
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment value!");
                             return rc;
+                        } else {
+                            rc = PLCTAG_STATUS_OK;
                         }
                     } else if(val > 0xFF) {
-                        rc = bytebuf_set_int8(buf, (int8_t)0x29); /* MAGIC - numeric segment of two bytes. */
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U8, 0x29); /* MAGIC - numeric segment of 2 bytes */
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment type byte!");
                             return rc;
                         }
 
                         /* inject a padding byte. */
-                        rc = bytebuf_set_int8(buf, (int8_t)0);
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U8, 0); /* pad to even number of bytes. */
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment type padding byte!");
                             return rc;
                         }
 
-                        rc = bytebuf_set_int16(buf, (int16_t)val);
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U16, val);
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment value!");
                             return rc;
+                        } else {
+                            rc = PLCTAG_STATUS_OK;
                         }
                     } else {
-                        rc = bytebuf_set_int8(buf, (int8_t)0x28); /* MAGIC - numeric segment of one byte */
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U8, 0x28); /* MAGIC - numeric segment of 1 byte */
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment type byte!");
                             return rc;
                         }
 
-                        rc = bytebuf_set_int8(buf, (int8_t)val);
-                        if(rc != PLCTAG_STATUS_OK) {
+                        rc = bytebuf_marshal(buf, BB_U8, val);
+                        if(rc < PLCTAG_STATUS_OK) {
                             pdebug(DEBUG_WARN,"Unable to inject numeric segment value!");
                             return rc;
+                        } else {
+                            rc = PLCTAG_STATUS_OK;
                         }
                     }
 
@@ -1141,8 +1090,8 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
         return rc;
     }
 
-    rc = bytebuf_set_int8(buf, (int8_t)word_count);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_marshal(buf, BB_U8, (uint8_t)word_count);
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set word count byte!");
         return rc;
     }

@@ -21,6 +21,7 @@
 
 #include <platform.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <lib/libplctag.h>
 #include <util/bytebuf.h>
 #include <util/debug.h>
@@ -45,23 +46,23 @@ struct bytebuf_t {
 
 
 
-static int get_int8(bytebuf_p buf, int8_t *val);
-static int set_int8(bytebuf_p buf, int8_t val);
+//~ static int get_int8(bytebuf_p buf, int8_t *val);
+//~ static int set_int8(bytebuf_p buf, int8_t val);
 
-static int get_int16(bytebuf_p buf, int16_t *val);
-static int set_int16(bytebuf_p buf, int16_t val);
+//~ static int get_int16(bytebuf_p buf, int16_t *val);
+//~ static int set_int16(bytebuf_p buf, int16_t val);
 
-static int get_int32(bytebuf_p buf, int32_t *val);
-static int set_int32(bytebuf_p buf, int32_t val);
+//~ static int get_int32(bytebuf_p buf, int32_t *val);
+//~ static int set_int32(bytebuf_p buf, int32_t val);
 
-static int get_int64(bytebuf_p buf, int64_t *val);
-static int set_int64(bytebuf_p buf, int64_t val);
+//~ static int get_int64(bytebuf_p buf, int64_t *val);
+//~ static int set_int64(bytebuf_p buf, int64_t val);
 
-static int get_float32(bytebuf_p buf, float *val);
-static int set_float32(bytebuf_p buf, float val);
+//~ static int get_float32(bytebuf_p buf, float *val);
+//~ static int set_float32(bytebuf_p buf, float val);
 
-static int get_float64(bytebuf_p buf, double *val);
-static int set_float64(bytebuf_p buf, double val);
+//~ static int get_float64(bytebuf_p buf, double *val);
+//~ static int set_float64(bytebuf_p buf, double val);
 
 static int get_int(bytebuf_p buf, int size, uint32_t byte_order, int64_t *val);
 static int set_int(bytebuf_p buf, int size, uint32_t byte_order, int64_t val);
@@ -214,6 +215,7 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 {
     int index = 0;
     int length = 0;
+    int length_increment = 0;
     int rc = PLCTAG_STATUS_OK;
     va_list args;
 
@@ -234,12 +236,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int8_t val = (int8_t)va_arg(args, int);
 
-                    length += 1;
+                    length_increment = 1;
                     index++;
 
                     if(buf) {
-                        rc = set_int8(buf, (int8_t)val);
+                        rc = set_int(buf, 1, 0x00, (int64_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_I8 value %d",(int)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I8 requires an int8_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -251,12 +255,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint8_t val = (uint8_t)(int8_t)va_arg(args, int);
 
-                    length += 1;
+                    length_increment = 1;
                     index++;
 
                     if(buf) {
-                        rc = set_int8(buf, (int8_t)val);
+                        rc = set_int(buf, 1, 0x00, (int64_t)(int8_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_U8 value %u",(uint32_t)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U8 requires an uint8_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -268,12 +274,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int16_t val = (int16_t)va_arg(args, int);
 
-                    length += 2;
+                    length_increment = 2;
                     index++;
 
                     if(buf) {
-                        rc = set_int16(buf, (int16_t)val);
+                        rc = set_int(buf, 2, buf->bo_int16, (int64_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_I16 value %d",(int)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I16 requires an int16_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -285,12 +293,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint16_t val = (uint16_t)(int16_t)va_arg(args, int);
 
-                    length += 2;
+                    length_increment = 2;
                     index++;
 
                     if(buf) {
-                        rc = set_int16(buf, (int16_t)val);
+                        rc = set_int(buf, 2, buf->bo_int16, (int64_t)(int16_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_I16 value %u",(uint32_t)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U16 requires an uint16_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -302,12 +312,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int32_t val = va_arg(args, int32_t);
 
-                    length += 4;
+                    length_increment = 4;
                     index++;
 
                     if(buf) {
-                        rc = set_int32(buf, (int32_t)val);
+                        rc = set_int(buf, 4, buf->bo_int32, (int64_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_I32 value %d",(int)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I32 requires an int32_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -319,12 +331,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint32_t val = va_arg(args, uint32_t);
 
-                    length += 4;
+                    length_increment = 4;
                     index++;
 
                     if(buf) {
-                        rc = set_int32(buf, (int32_t)val);
+                        rc = set_int(buf, 4, buf->bo_int32, (int64_t)(int32_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_U32 value %u",(uint32_t)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U32 requires an uint32_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -336,12 +350,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int64_t val = va_arg(args, int64_t);
 
-                    length += 8;
+                    length_increment = 8;
                     index++;
 
                     if(buf) {
-                        rc = set_int64(buf, (int64_t)val);
+                        rc = set_int(buf, 8, buf->bo_int64, val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_I64 value %" PRId64 "", val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I64 requires an int64_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -353,12 +369,14 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint64_t val = va_arg(args, uint64_t);
 
-                    length += 8;
+                    length_increment = 8;
                     index++;
 
                     if(buf) {
-                        rc = set_int64(buf, (int64_t)val);
+                        rc = set_int(buf, 8, buf->bo_int64, (int64_t)val);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_U64 value %" PRIu64 "",val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U64 requires an uint64_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -370,12 +388,21 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     float val = (float)va_arg(args, double);
 
-                    length += 4;
+                    length_increment = 4;
                     index++;
 
                     if(buf) {
-                        rc = set_float32(buf, (float)val);
+                        int32_t tmp32 = 0;
+                        int64_t tmp64 = 0;
+
+                        mem_copy(&tmp32, &val, (sizeof(val) < sizeof(tmp32) ? sizeof(val) : sizeof(tmp32)));
+
+                        tmp64 = (int64_t)tmp32;
+
+                        rc = set_int(buf, 4, buf->bo_float32, tmp64);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_F32 value %f",val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_F32 requires a float argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -387,12 +414,18 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     double val = va_arg(args, double);
 
-                    length += 8;
+                    length_increment = 8;
                     index++;
 
                     if(buf) {
-                        rc = set_float64(buf, (double)val);
+                        int64_t tmp64 = 0;
+
+                        mem_copy(&tmp64, &val, (sizeof(val) < sizeof(tmp64) ? sizeof(val) : sizeof(tmp64)));
+
+                        rc = set_int(buf, 4, buf->bo_float32, tmp64);
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_F64 value %d",val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_F64 requires a double argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -405,14 +438,16 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                     uint8_t *bytes = va_arg(args, uint8_t *);
                     int byte_count = va_arg(args, int);
 
-                    length += byte_count;
+                    length_increment = byte_count;
                     index += 2;
 
                     if(buf) {
                         for(int i=0; i < byte_count && rc == PLCTAG_STATUS_OK; i++) {
-                            rc = set_int8(buf, (int8_t)bytes[i]);
+                            rc = set_int(buf, 1, 0x00, (int8_t)bytes[i]);
                         }
                     }
+
+                    pdebug(DEBUG_DETAIL,"Marshalling BB_BYTES of length %d",byte_count);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_BYTES requires an uint8_t* argument and an integer count argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -422,6 +457,7 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
         }
 
         index++;
+        length += length_increment;
     }
     va_end(args);
 
@@ -434,12 +470,19 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
 {
     int index = 0;
     int length = 0;
+    int length_increment = 0;
     int rc = PLCTAG_STATUS_OK;
+    int64_t tmp;
     va_list args;
 
     if(arg_count < 1) {
         pdebug(DEBUG_WARN,"Insufficient arguments!");
         return PLCTAG_ERR_BAD_PARAM;
+    }
+
+    if(!buf) {
+        pdebug(DEBUG_WARN,"Byte buffer pointer is null!");
+        return PLCTAG_ERR_NULL_PTR;
     }
 
     va_start(args, arg_count);
@@ -454,12 +497,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int8_t *val = va_arg(args, int8_t*);
 
-                    length += 1;
+                    length_increment = 1;
                     index++;
 
-                    if(buf) {
-                        rc = get_int8(buf, (int8_t*)val);
+                    rc = get_int(buf, 1, 0x00, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = (int8_t)tmp;
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_I8 %d",(int)*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I8 requires an int8_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -471,13 +519,18 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint8_t *val = va_arg(args, uint8_t*);
 
-                    length += 1;
+                    length_increment = 1;
                     index++;
 
-                    if(buf) {
-                        rc = get_int8(buf, (int8_t*)val);
+                    rc = get_int(buf, 1, 0x00, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = (uint8_t)(int8_t)tmp;
                     }
-                } else {
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_U8 %d",(int)*val);
+                  } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U8 requires an uint8_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
                 }
@@ -488,13 +541,18 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int16_t *val = va_arg(args, int16_t*);
 
-                    length += 2;
+                    length_increment = 2;
                     index++;
 
-                    if(buf) {
-                        rc = get_int16(buf, (int16_t*)val);
+                    rc = get_int(buf, 2, buf->bo_int16, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = (int16_t)tmp;
                     }
-                } else {
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_I16 %d",(int)*val);
+                  } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I16 requires an int16_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
                 }
@@ -505,12 +563,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint16_t *val = va_arg(args, uint16_t*);
 
-                    length += 2;
+                    length_increment = 2;
                     index++;
 
-                    if(buf) {
-                        rc = get_int16(buf, (int16_t*)val);
+                    rc = get_int(buf, 2, buf->bo_int16, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = (uint16_t)(int16_t)tmp;
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_U16 %d",(int)*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U16 requires an uint16_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -522,12 +585,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int32_t *val = va_arg(args, int32_t*);
 
-                    length += 4;
+                    length_increment = 4;
                     index++;
 
-                    if(buf) {
-                        rc = get_int32(buf, (int32_t*)val);
+                    rc = get_int(buf, 4, buf->bo_int32, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = (int32_t)tmp;
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_I32 %d",(int)*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I32 requires an int32_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -539,12 +607,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint32_t *val = va_arg(args, uint32_t*);
 
-                    length += 4;
+                    length_increment = 4;
                     index++;
 
-                    if(buf) {
-                        rc = get_int32(buf, (int32_t*)val);
+                    rc = get_int(buf, 4, buf->bo_int32, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = (uint32_t)(int32_t)tmp;
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_U32 %u",(uint32_t)*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U32 requires an uint32_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -556,12 +629,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     int64_t *val = va_arg(args, int64_t*);
 
-                    length += 8;
+                    length_increment = 8;
                     index++;
 
-                    if(buf) {
-                        rc = get_int64(buf, (int64_t*)val);
+                    rc = get_int(buf, 8, buf->bo_int64, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = tmp;
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_I64 %" PRId64 "",*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I64 requires an int64_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -573,12 +651,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     uint64_t *val = va_arg(args, uint64_t*);
 
-                    length += 8;
+                    length_increment = 8;
                     index++;
 
-                    if(buf) {
-                        rc = get_int64(buf, (int64_t*)val);
+                    rc = get_int(buf, 8, buf->bo_int64, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0;
+                    } else {
+                        *val = tmp;
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_U64 %" PRIu64 "",*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U64 requires an uint64_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -590,12 +673,18 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     float *val = va_arg(args, float*);
 
-                    length += 4;
+                    length_increment = 4;
                     index++;
 
-                    if(buf) {
-                        rc = get_float32(buf, (float*)val);
+                    rc = get_int(buf, 4, buf->bo_float32, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0.0;
+                    } else {
+                        int32_t tmp32 = (int32_t)tmp;
+                        mem_copy(val, &tmp32, (sizeof(*val) < sizeof(tmp32) ? sizeof(*val) : sizeof(tmp32)));
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_F32 %f",*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_F32 requires a float argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -607,12 +696,17 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 if(index < (arg_count - 1)) {
                     double *val = va_arg(args, double*);
 
-                    length += 8;
+                    length_increment = 8;
                     index++;
 
-                    if(buf) {
-                        rc = get_float64(buf, (double*)val);
+                    rc = get_int(buf, 8, buf->bo_float64, &tmp);
+                    if(rc != PLCTAG_STATUS_OK) {
+                        *val = 0.0;
+                    } else {
+                        mem_copy(val, &tmp, (sizeof(*val) < sizeof(tmp) ? sizeof(*val) : sizeof(tmp)));
                     }
+
+                    pdebug(DEBUG_DETAIL,"Unmarshalling BB_F32 %f",*val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_F64 requires a double argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -625,12 +719,16 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                     uint8_t *bytes = va_arg(args, uint8_t *);
                     int byte_count = va_arg(args, int);
 
-                    length += byte_count;
+                    length_increment = byte_count;
                     index += 2;
 
-                    if(buf) {
-                        for(int i=0; i < byte_count && rc == PLCTAG_STATUS_OK; i++) {
-                            rc = get_int8(buf, (int8_t*)&bytes[i]);
+                    pdebug(DEBUG_DETAIL,"Unmarshalling byte array of size %d", byte_count);
+                    for(int i=0; i < byte_count && rc == PLCTAG_STATUS_OK; i++) {
+                        rc = get_int(buf, 1, 0x00, &tmp);
+                        if(rc != PLCTAG_STATUS_OK) {
+                            bytes[i] = 0;
+                        } else {
+                            bytes[i] = (uint8_t)(int8_t)tmp;
                         }
                     }
                 } else {
@@ -639,9 +737,15 @@ int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...)
                 }
 
                 break;
+
+            default:
+                pdebug(DEBUG_WARN,"Unknown data type %d!");
+                rc = PLCTAG_ERR_BAD_PARAM;
+                break;
         }
 
         index++;
+        length += length_increment;
     }
     va_end(args);
 
@@ -738,67 +842,67 @@ int bytebuf_destroy(bytebuf_p buf)
 
 
 
-int get_int8(bytebuf_p buf, int8_t *val)
-{
-    int64_t tmp;
-    int rc;
+//~ int get_int8(bytebuf_p buf, int8_t *val)
+//~ {
+    //~ int64_t tmp;
+    //~ int rc;
 
-    rc = get_int(buf, 1, 0x00, &tmp);
-    if(rc != PLCTAG_STATUS_OK) {
-        *val = 0;
-        return rc;
-    }
+    //~ rc = get_int(buf, 1, 0x00, &tmp);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ *val = 0;
+        //~ return rc;
+    //~ }
 
-    *val = (int8_t)tmp;
+    //~ *val = (int8_t)tmp;
 
-    return PLCTAG_STATUS_OK;
-}
+    //~ return PLCTAG_STATUS_OK;
+//~ }
 
 
-int set_int8(bytebuf_p buf, int8_t val)
-{
-    int64_t tmp = (int64_t)val;
+//~ int set_int8(bytebuf_p buf, int8_t val)
+//~ {
+    //~ int64_t tmp = (int64_t)val;
 
-    return set_int(buf, 1, 0x00, tmp);
-}
+    //~ return set_int(buf, 1, 0x00, tmp);
+//~ }
 
 
 
 
 
-int get_int16(bytebuf_p buf, int16_t *val)
-{
-    int64_t tmp;
-    int rc;
+//~ int get_int16(bytebuf_p buf, int16_t *val)
+//~ {
+    //~ int64_t tmp;
+    //~ int rc;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    rc = get_int(buf, 2, buf->bo_int16, &tmp);
-    if(rc != PLCTAG_STATUS_OK) {
-        *val = 0;
-        return rc;
-    }
+    //~ rc = get_int(buf, 2, buf->bo_int16, &tmp);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ *val = 0;
+        //~ return rc;
+    //~ }
 
-    *val = (int16_t)tmp;
+    //~ *val = (int16_t)tmp;
 
-    return PLCTAG_STATUS_OK;
-}
+    //~ return PLCTAG_STATUS_OK;
+//~ }
 
 
-int set_int16(bytebuf_p buf, int16_t val)
-{
-    int64_t tmp = (int64_t)val;
+//~ int set_int16(bytebuf_p buf, int16_t val)
+//~ {
+    //~ int64_t tmp = (int64_t)val;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    return set_int(buf, 2, buf->bo_int16, tmp);
-}
+    //~ return set_int(buf, 2, buf->bo_int16, tmp);
+//~ }
 
 
 
@@ -806,120 +910,119 @@ int set_int16(bytebuf_p buf, int16_t val)
 
 
 
-int get_int32(bytebuf_p buf, int32_t *val)
-{
-    int64_t tmp;
-    int rc;
+//~ int get_int32(bytebuf_p buf, int32_t *val)
+//~ {
+    //~ int64_t tmp;
+    //~ int rc;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    rc = get_int(buf, 4, buf->bo_int32, &tmp);
-    if(rc != PLCTAG_STATUS_OK) {
-        *val = 0;
-        return rc;
-    }
+    //~ rc = get_int(buf, 4, buf->bo_int32, &tmp);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ *val = 0;
+        //~ return rc;
+    //~ }
 
-    *val = (int32_t)tmp;
+    //~ *val = (int32_t)tmp;
 
-    return PLCTAG_STATUS_OK;
-}
+    //~ return PLCTAG_STATUS_OK;
+//~ }
 
 
-int set_int32(bytebuf_p buf, int32_t val)
-{
-    int64_t tmp = (int64_t)val;
+//~ int set_int32(bytebuf_p buf, int32_t val)
+//~ {
+    //~ int64_t tmp = (int64_t)val;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    return set_int(buf, 4, buf->bo_int32, tmp);
-}
+    //~ return set_int(buf, 4, buf->bo_int32, tmp);
+//~ }
 
 
 
 
 
 
-int get_int64(bytebuf_p buf, int64_t *val)
-{
-    int rc;
+//~ int get_int64(bytebuf_p buf, int64_t *val)
+//~ {
+    //~ int rc;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    rc = get_int(buf, 8, buf->bo_int64, val);
-    if(rc != PLCTAG_STATUS_OK) {
-        *val = 0;
-        return rc;
-    }
+    //~ rc = get_int(buf, 8, buf->bo_int64, val);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ *val = 0;
+        //~ return rc;
+    //~ }
 
-    return PLCTAG_STATUS_OK;
-}
+    //~ return PLCTAG_STATUS_OK;
+//~ }
 
 
-int set_int64(bytebuf_p buf, int64_t val)
-{
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+//~ int set_int64(bytebuf_p buf, int64_t val)
+//~ {
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    return set_int(buf, 8, buf->bo_int64, val);
-}
+    //~ return set_int(buf, 8, buf->bo_int64, val);
+//~ }
 
 
 
 
 
 
-int get_float32(bytebuf_p buf, float *val)
-{
-    int64_t tmp64 = 0;
-    int32_t tmp32 = 0;
-    int rc;
+//~ int get_float32(bytebuf_p buf, float *val)
+//~ {
+    //~ int64_t tmp64 = 0;
+    //~ int rc;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    rc = get_int(buf, 4, buf->bo_float32, &tmp64);
-    if(rc != PLCTAG_STATUS_OK) {
-        *val = 0.0;
-        return rc;
-    }
+    //~ rc = get_int(buf, 4, buf->bo_float32, &tmp64);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ *val = 0.0;
+        //~ return rc;
+    //~ }
 
-    tmp32 = (int32_t)tmp64;
+    //~ int32_t tmp32 = (int32_t)tmp64;
 
-    mem_copy(val, &tmp32, (sizeof(*val) < sizeof(tmp32) ? sizeof(*val) : sizeof(tmp32)));
+    //~ mem_copy(val, &tmp32, (sizeof(*val) < sizeof(tmp32) ? sizeof(*val) : sizeof(tmp32)));
 
-    return PLCTAG_STATUS_OK;
-}
+    //~ return PLCTAG_STATUS_OK;
+//~ }
 
-int set_float32(bytebuf_p buf, float val)
-{
-    int64_t tmp64 = 0;
-    int32_t tmp32 = 0;
+//~ int set_float32(bytebuf_p buf, float val)
+//~ {
+    //~ int64_t tmp64 = 0;
+    //~ int32_t tmp32 = 0;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    mem_copy(&tmp32, &val, (sizeof(val) < sizeof(tmp32) ? sizeof(val) : sizeof(tmp32)));
+    //~ mem_copy(&tmp32, &val, (sizeof(val) < sizeof(tmp32) ? sizeof(val) : sizeof(tmp32)));
 
-    tmp64 = (int64_t)tmp32;
+    //~ tmp64 = (int64_t)tmp32;
 
-    return set_int(buf, 4, buf->bo_float32, tmp64);
+    //~ return set_int(buf, 4, buf->bo_float32, tmp64);
 
-}
+//~ }
 
 
 
@@ -927,40 +1030,40 @@ int set_float32(bytebuf_p buf, float val)
 
 
 
-int get_float64(bytebuf_p buf, double *val)
-{
-    int64_t tmp64 = 0;
-    int rc;
+//~ int get_float64(bytebuf_p buf, double *val)
+//~ {
+    //~ int64_t tmp64 = 0;
+    //~ int rc;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    rc = get_int(buf, 8, buf->bo_float64, &tmp64);
-    if(rc != PLCTAG_STATUS_OK) {
-        *val = 0.0;
-        return rc;
-    }
+    //~ rc = get_int(buf, 8, buf->bo_float64, &tmp64);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ *val = 0.0;
+        //~ return rc;
+    //~ }
 
-    mem_copy(val, &tmp64, (sizeof(*val) < sizeof(tmp64) ? sizeof(*val) : sizeof(tmp64)));
+    //~ mem_copy(val, &tmp64, (sizeof(*val) < sizeof(tmp64) ? sizeof(*val) : sizeof(tmp64)));
 
-    return PLCTAG_STATUS_OK;
-}
+    //~ return PLCTAG_STATUS_OK;
+//~ }
 
-int set_float64(bytebuf_p buf, double val)
-{
-    int64_t tmp64 = 0;
+//~ int set_float64(bytebuf_p buf, double val)
+//~ {
+    //~ int64_t tmp64 = 0;
 
-    if(!buf) {
-        pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        return PLCTAG_ERR_NULL_PTR;
-    }
+    //~ if(!buf) {
+        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
+        //~ return PLCTAG_ERR_NULL_PTR;
+    //~ }
 
-    mem_copy(&tmp64, &val, (sizeof(val) < sizeof(tmp64) ? sizeof(val) : sizeof(tmp64)));
+    //~ mem_copy(&tmp64, &val, (sizeof(val) < sizeof(tmp64) ? sizeof(val) : sizeof(tmp64)));
 
-    return set_int(buf, 8, buf->bo_float64, tmp64);
-}
+    //~ return set_int(buf, 8, buf->bo_float64, tmp64);
+//~ }
 
 
 
