@@ -181,7 +181,7 @@ int debug_read(void* plc, tag_p tag)
     }
 
     /* get the new level */
-    rc = bytebuf_set_int32(data, debug_level);
+    rc = bytebuf_marshal(data, BB_I32, debug_level);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Error writing the debug level into the tag data!");
         return rc;
@@ -223,7 +223,7 @@ int debug_write(void* plc, tag_p tag)
     }
 
     /* get the new level */
-    rc = bytebuf_get_int32(data, &debug_level);
+    rc = bytebuf_unmarshal(data, BB_I32, &debug_level);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Error getting new debug level!");
         return rc;
@@ -304,12 +304,10 @@ int version_read(void* plc, tag_p tag)
     }
 
     /* get the version info */
-    for(int i=0; i < 3; i++) {
-        rc = bytebuf_set_int32(data, (int32_t)VERSION_ARRAY[i]);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Error writing the version info into the tag data!");
-            return rc;
-        }
+    rc = bytebuf_marshal(data, BB_I32, VERSION_ARRAY[0], BB_I32, VERSION_ARRAY[1], BB_I32, VERSION_ARRAY[2]);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error writing the version info into the tag data!");
+        return rc;
     }
 
     return PLCTAG_STATUS_OK;
