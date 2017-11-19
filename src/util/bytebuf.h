@@ -42,7 +42,7 @@ typedef enum {BB_I8, BB_U8, BB_I16, BB_U16, BB_I32, BB_U32, BB_I64, BB_U64, BB_F
 #define bytebuf_marshal(buf, ...) bytebuf_marshal_impl(buf, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
 extern int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...);
 
-#define bytebuf_unmarshal(buf, ...) bytebuf_marshal_impl(buf, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
+#define bytebuf_unmarshal(buf, ...) bytebuf_unmarshal_impl(buf, COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
 extern int bytebuf_unmarshal_impl(bytebuf_p buf, int arg_count, ...);
 
 

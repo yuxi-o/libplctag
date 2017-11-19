@@ -241,9 +241,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 1, 0x00, (int64_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_I8 value %d",(int)val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_I8 is %d byte",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_I8 value %d",(int)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I8 requires an int8_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -260,9 +261,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 1, 0x00, (int64_t)(int8_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_U8 value %u",(uint32_t)val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_U8 is %d byte",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_U8 value %u",(uint32_t)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U8 requires an uint8_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -279,9 +281,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 2, buf->bo_int16, (int64_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_I16 value %d",(int)val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_I16 is %d bytes",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_I16 value %d",(int)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I16 requires an int16_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -298,9 +301,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 2, buf->bo_int16, (int64_t)(int16_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_U16 value %u",(uint32_t)val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_U16 is %d bytes",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_I16 value %u",(uint32_t)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U16 requires an uint16_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -317,9 +321,11 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 4, buf->bo_int32, (int64_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_I32 value %d",(int)val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_I32 is %d bytes",length_increment);
                     }
 
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_I32 value %d",(int)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I32 requires an int32_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -336,9 +342,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 4, buf->bo_int32, (int64_t)(int32_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_U32 value %u",(uint32_t)val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_U32 is %d bytes",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_U32 value %u",(uint32_t)val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U32 requires an uint32_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -355,9 +362,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 8, buf->bo_int64, val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_I64 value %" PRId64 "", val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_I64 is %d bytes",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_I64 value %" PRId64 "", val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_I64 requires an int64_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -374,9 +382,10 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
 
                     if(buf) {
                         rc = set_int(buf, 8, buf->bo_int64, (int64_t)val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_U64 value %" PRIu64 "",val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_U64 is %d bytes",length_increment);
                     }
-
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_U64 value %" PRIu64 "",val);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_U64 requires an uint64_t argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -400,9 +409,11 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                         tmp64 = (int64_t)tmp32;
 
                         rc = set_int(buf, 4, buf->bo_float32, tmp64);
-                    }
 
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_F32 value %f",val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_F32 value %f",val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_F32 is %d bytes",length_increment);
+                    }
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_F32 requires a float argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -423,9 +434,11 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                         mem_copy(&tmp64, &val, (sizeof(val) < sizeof(tmp64) ? sizeof(val) : sizeof(tmp64)));
 
                         rc = set_int(buf, 4, buf->bo_float32, tmp64);
-                    }
 
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_F64 value %d",val);
+                        pdebug(DEBUG_DETAIL,"Marshalling BB_F64 value %d",val);
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_F64 is %d bytes",length_increment);
+                    }
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_F64 requires a double argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
@@ -444,10 +457,12 @@ int bytebuf_marshal_impl(bytebuf_p buf, int arg_count, ...)
                     if(buf) {
                         for(int i=0; i < byte_count && rc == PLCTAG_STATUS_OK; i++) {
                             rc = set_int(buf, 1, 0x00, (int8_t)bytes[i]);
+                            pdebug(DEBUG_DETAIL,"Marshalling BB_BYTES of length %d",byte_count);
                         }
+                    } else {
+                        pdebug(DEBUG_DETAIL,"Calculating length BB_BYTES is %d bytes",length_increment);
                     }
 
-                    pdebug(DEBUG_DETAIL,"Marshalling BB_BYTES of length %d",byte_count);
                 } else {
                     pdebug(DEBUG_WARN,"Arg %d of type BB_BYTES requires an uint8_t* argument and an integer count argument!", index);
                     rc = PLCTAG_ERR_BAD_PARAM;
