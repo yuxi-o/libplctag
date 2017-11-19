@@ -719,10 +719,10 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     int rc = PLCTAG_STATUS_OK;
     int32_t instance_id;
     uint16_t string_len;
-    char symbol_name[128];
+    char symbol_name[128] = {0,};
     uint16_t symbol_type;
-    int symbol_name_index;
-    int end_of_entry_index;
+    //~ int symbol_name_index;
+    //~ int end_of_entry_index;
     logix_tag_info_p tag_info = NULL;
 
     if(bytebuf_get_cursor(buf) >= bytebuf_get_size(buf)) {
@@ -737,55 +737,33 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     uint16_t symbol_type    type of the symbol.
     */
 
-    rc = bytebuf_get_int32(buf, &instance_id);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get instance ID!");
+    rc = bytebuf_unmarshal(buf, BB_U32, &instance_id, BB_U16, &string_len);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to get instance ID or string length!");
         return rc;
     }
 
     /* save this for later */
     *last_instance_id = instance_id;
 
-    rc = bytebuf_get_int16(buf, (int16_t*)&string_len);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get symbol name length!");
-        return rc;
-    }
-
-    /* get a placeholder for the symbol name */
-    symbol_name_index = bytebuf_get_cursor(buf);
-
     /* copy the name for printing */
-    snprintf(&symbol_name[0], (sizeof(symbol_name) < ((size_t)string_len+1) ? sizeof(symbol_name) : (size_t)string_len+1),"%s",bytebuf_get_buffer(buf));
-
-    /* skip to the symbol type */
-    rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + (int)string_len);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to move cursor to symbol type!");
+    rc = bytebuf_unmarshal(buf, BB_BYTES, symbol_name, ((sizeof(symbol_name)-1) < ((size_t)string_len) ? sizeof(symbol_name)-1 : (size_t)string_len));
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Unable to get tag name!");
         return rc;
     }
 
     /* get the symbol type */
-    rc = bytebuf_get_int16(buf, (int16_t*)&symbol_type);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = bytebuf_unmarshal(buf, BB_U16, &symbol_type);
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to get symbol type!");
         return rc;
     }
 
     pdebug(DEBUG_INFO,"Get symbol entry for \"%s\" with instance ID %x and type %x",symbol_name, (int)instance_id, (int)symbol_type);
 
-    /* get the end of entry index for later. */
-    end_of_entry_index = bytebuf_get_cursor(buf);
-
-    /* seek back to the beginning of the symbol name */
-    rc = bytebuf_set_cursor(buf, symbol_name_index);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to move cursor to symbol name!");
-        return rc;
-    }
-
     /* store the symbol data into the hashtable. */
-    tag_info = hashtable_get(tag_info_table, bytebuf_get_buffer(buf), (int)string_len);
+    tag_info = hashtable_get(tag_info_table, symbol_name, (int)string_len);
     if(!tag_info) {
         /* make an entry */
         tag_info = mem_alloc(sizeof(struct logix_tag_info_t));
@@ -806,14 +784,6 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     /* perhaps the instance ID could be different? */
     tag_info->instance_id = instance_id;
     tag_info->type_info = symbol_type;
-
-    /* seek to the end of the symbol entry */
-    rc = bytebuf_set_cursor(buf, end_of_entry_index);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to move cursor to symbol name!");
-        return rc;
-    }
-
 
     return rc;
 }
