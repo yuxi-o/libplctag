@@ -354,6 +354,8 @@ int tag_status(void *plc_arg, tag_p tag)
     logix_plc_p plc = (logix_plc_p)plc_arg;
     int status = PLCTAG_STATUS_OK;
 
+    pdebug(DEBUG_DETAIL,"Starting.");
+
     if(!plc) {
         pdebug(DEBUG_WARN,"PLC pointer is NULL.");
     }
@@ -363,6 +365,7 @@ int tag_status(void *plc_arg, tag_p tag)
     }
 
     if(status != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_DETAIL,"Status not OK.");
         return status;
     }
 
@@ -373,7 +376,8 @@ int tag_status(void *plc_arg, tag_p tag)
         for(int i=0; i < vector_length(plc->requests); i++) {
             logix_request_p request = vector_get(plc->requests, i);
 
-            if(request_get_tag(request) == tag) {
+            if(request_get_tag(request) == tag || request_get_tag(request) == NULL) {
+                pdebug(DEBUG_DETAIL,"Operation in progress.");
                 status = PLCTAG_STATUS_PENDING;
                 break;
             }
@@ -655,7 +659,18 @@ int process_request(logix_plc_p plc)
 
     /* get a request from the queue. */
     critical_block(plc->mutex) {
-        request = vector_remove(plc->requests, 0);
+        //~ request = vector_remove(plc->requests, 0);
+        request = vector_get(plc->requests, 0);
+
+        /* set the status to pending if we are processing a generic request. */
+        //~ if(request && request_get_tag(request) == NULL) {
+            //~ plc->status = PLCTAG_STATUS_PENDING;
+        //~ } else {
+            //~ /* If there are no more requests... */
+            //~ if(plc->status == PLCTAG_STATUS_PENDING) {
+                //~ plc->status = PLCTAG_STATUS_OK;
+            //~ }
+        //~ }
     }
 
     if(request) {
@@ -684,7 +699,12 @@ int process_request(logix_plc_p plc)
             pdebug(DEBUG_WARN,"Unable to process request, error %s!", plc_tag_decode_error(rc));
         }
 
-        /* done with the response. */
+        /* remove the request from the queue now */
+        critical_block(plc->mutex) {
+            request = vector_remove(plc->requests, 0);
+        }
+
+        /* done with the request. */
         rc_dec(request);
     }
 
@@ -725,6 +745,8 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     //~ int end_of_entry_index;
     logix_tag_info_p tag_info = NULL;
 
+    pdebug(DEBUG_DETAIL,"Starting.");
+
     if(bytebuf_get_cursor(buf) >= bytebuf_get_size(buf)) {
         pdebug(DEBUG_INFO,"No data left in buffer.");
         return PLCTAG_ERR_NO_DATA;
@@ -745,6 +767,8 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
 
     /* save this for later */
     *last_instance_id = instance_id;
+
+    pdebug(DEBUG_DETAIL,"instance ID = %d, symbol name length = %d",instance_id, (int)string_len);
 
     /* copy the name for printing */
     rc = bytebuf_unmarshal(buf, BB_BYTES, symbol_name, ((sizeof(symbol_name)-1) < ((size_t)string_len) ? sizeof(symbol_name)-1 : (size_t)string_len));
@@ -773,12 +797,17 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
         }
 
         /* add the instance to the hashtable */
-        rc = hashtable_put(tag_info_table, bytebuf_get_buffer(buf), (int)string_len, tag_info);
+        rc = hashtable_put(tag_info_table, symbol_name, (int)string_len, tag_info);
 
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to insert new info struct into tag info table!");
             return rc;
         }
+    } else {
+        /* rc is going to be set to the number of bytes retrieved in bytebuf_unmarshal() above. */
+        rc = PLCTAG_STATUS_OK;
+
+        pdebug(DEBUG_DETAIL,"Found existing symbol table entry.");
     }
 
     /* perhaps the instance ID could be different? */
@@ -805,6 +834,8 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
     uint8_t cip_status = 0;
     uint16_t cip_extended_status = 0;
 
+    pdebug(DEBUG_INFO,"Starting.");
+
     do {
         /* set the cursor back to zero so that we can start writing the data to the socket. */
         rc = bytebuf_reset(plc->data);
@@ -822,6 +853,13 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
             return rc;
         }
 
+        /* set the cursor back to zero so that we can start writing the data to the socket. */
+        rc = bytebuf_set_cursor(plc->data, 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error inserting setting bytebuffer cursor!");
+            return rc;
+        }
+
         do {
             rc = send_eip_packet(plc->sock, buf);
             if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
@@ -836,7 +874,7 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
         }
 
         if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Error sending session registration request!");
+            pdebug(DEBUG_WARN,"Error sending tag info request!");
             return rc;
         }
 
@@ -854,11 +892,12 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
         } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
 
         if(rc_thread_check_abort() || request_get_abort(request)) {
+            pdebug(DEBUG_WARN,"Aborting request!");
             rc = PLCTAG_ERR_ABORT;
         }
 
         if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Error receiving session registration response!");
+            pdebug(DEBUG_WARN,"Error receiving tag info response!");
             return rc;
         }
 
@@ -871,13 +910,18 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
             return rc;
         }
 
-        if(cip_status != AB_CIP_OK) {
+        if(cip_status != AB_CIP_OK && cip_status != AB_CIP_STATUS_FRAG) {
             pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(cip_status, cip_extended_status, 0), decode_cip_error(cip_status, cip_extended_status, 1));
             return PLCTAG_ERR_REMOTE_ERR;
         }
 
         do {
             rc = process_get_tags_reply_entries(buf, plc->tag_info, &last_instance_id);
+
+            /* point the last instance ID just past the one we retrieved. */
+            if(rc == PLCTAG_STATUS_OK) {
+                last_instance_id++;
+            }
         } while(rc == PLCTAG_STATUS_OK);
 
         if(rc == PLCTAG_ERR_NO_DATA) {
@@ -885,6 +929,8 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
             rc = PLCTAG_STATUS_OK;
         }
     } while(!request_get_abort(request) && !rc_thread_check_abort() && rc == PLCTAG_STATUS_OK && cip_status == AB_CIP_STATUS_FRAG);
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return rc;
 }

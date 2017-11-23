@@ -350,7 +350,9 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
      * an error or we timeout.
      */
     if(timeout>0) {
+        pdebug(DEBUG_DETAIL,"Waiting for timeout or valid state.");
         rc = wait_for_timeout(tag, timeout);
+        pdebug(DEBUG_DETAIL,"Done waiting for timeout or valid state. rc = %d", rc);
     } else {
         /* not waiting and no errors yet, so carry on. */
         rc = PLCTAG_STATUS_OK;
@@ -1942,6 +1944,7 @@ int wait_for_timeout(tag_p tag, int timeout)
          * async operations are done.
          */
         if(rc != PLCTAG_STATUS_PENDING) {
+            pdebug(DEBUG_DETAIL,"Ending loop.  Status = %d",rc);
             break;
         }
 

@@ -24,6 +24,7 @@
 #include <platform.h>
 #include <lib/libplctag.h>
 #include <ab/packet.h>
+#include <ab/error_codes.h>
 #include <util/bytebuf.h>
 #include <util/debug.h>
 #include <util/rc_thread.h>
@@ -75,13 +76,14 @@ int marshal_eip_header(int prev_rc, bytebuf_p buf,
     pdebug(DEBUG_DETAIL,"Starting.");
 
     if(prev_rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Aborting due to previous bad return code.");
         return prev_rc;
     }
 
     payload_size = bytebuf_get_size(buf);
 
     /* two calls, first gets size, second writes data. */
-    for(int i=0; i < 2; i++) {
+    for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
         rc = bytebuf_marshal(i == 0 ? NULL : buf ,
                              BB_U16, command,
                              BB_U16, payload_size,
@@ -92,16 +94,21 @@ int marshal_eip_header(int prev_rc, bytebuf_p buf,
                             );
         if(i == 0 && rc > 0) {
             /* make space at the beginning of the buffer. */
+            pdebug(DEBUG_DETAIL,"Making %d bytes of space at the beginning for the header.", rc);
             rc = bytebuf_set_cursor(buf, - rc); /* rc contains the header size. */
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Error setting buffer cursor!");
                 return rc;
             }
+
+            rc = PLCTAG_STATUS_OK;
         }
     }
 
     if(rc > 0) {
         rc = PLCTAG_STATUS_OK;
+    } else {
+        pdebug(DEBUG_WARN,"Unable to marshal data!");
     }
 
     pdebug(DEBUG_DETAIL,"Done.");
@@ -175,32 +182,48 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     uint8_t request_path_size  3 - 6 bytes
     uint8_t   0x20    get class
     uint8_t   0x6B    tag info/symbol class
-    uint8_t   0x26    get instance (32-bit)
+    uint8_t   0x25    get instance (16-bit)
     uint8_t   0x00    padding
     uint8_t   0x00    instance byte 0
     uint8_t   0x00    instance byte 1
-    uint8_t   0x00    instance byte 2
-    uint8_t   0x00    instance byte 3
     uint16_t  0x02    number of attributes to get
     uint16_t  0x01    attribute #1 - symbol name
     uint16_t  0x02    attribute #2 - symbol type
     */
 
     int rc = PLCTAG_STATUS_OK;
-    uint8_t req_path[] = {0x20, 0x6B, 0x26, 0x00};
+    uint8_t req_path[] = {0x20, 0x6B, 0x25, 0x00};
+    int first_pos = bytebuf_get_cursor(buf);
 
     rc = bytebuf_marshal(buf,
                         BB_U8, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST, /* request service */
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
-                        BB_U32, start_instance,
+                        BB_U16, (uint16_t)start_instance,
                         BB_U16, (uint16_t)2, /* get two attributes. */
                         BB_U16, 0x1, /* MAGIC - attribute #1 is the symbol name. */
                         BB_U16, 0x2  /* MAGIC - attribute #2 is the symbol type. */
                         );
 
     if(rc > 0) {
-        rc =PLCTAG_STATUS_OK;
+        int last_pos = bytebuf_get_cursor(buf);
+
+        rc = bytebuf_set_cursor(buf, first_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Created new packet data:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos - first_pos);
+
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+
+        rc = PLCTAG_STATUS_OK;
     }
 
     return rc;
@@ -333,9 +356,12 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
         ...IOI path to target device, connection IOI...
     */
 
+    pdebug(DEBUG_INFO,"Starting.");
+
     /* abort if the wrapped call was not good. */
     if(prev_rc != PLCTAG_STATUS_OK) {
-        return rc;
+        pdebug(DEBUG_WARN,"Aborting due to previous bad return code.");
+        return prev_rc;
     }
 
     /* save this for later. */
@@ -365,6 +391,23 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
     }
 
     if(rc > 0) {
+        int last_pos = bytebuf_get_cursor(buf);
+
+        rc = bytebuf_set_cursor(buf, 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of data!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Created new packet data:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
+
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+
         rc = PLCTAG_STATUS_OK;
     }
 
@@ -390,6 +433,27 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
         pdebug(DEBUG_WARN,"Unable to add PLC IOI path to packet!");
         return rc;
     }
+
+    if(rc == PLCTAG_STATUS_OK) {
+        int last_pos = bytebuf_get_cursor(buf);
+
+        rc = bytebuf_set_cursor(buf, 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of data!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Created new packet data:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
+
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return rc;
 }
@@ -450,7 +514,9 @@ int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_serv
             return rc;
         }
 
-        /* abort processing. */
+        pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(*status, *extended_status, 1), decode_cip_error(*status, *extended_status, 0));
+
+       /* abort processing. */
         return PLCTAG_ERR_REMOTE_ERR;
     } else {
         *extended_status = 0;
@@ -483,10 +549,12 @@ int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
         ... payload ...
     */
 
+    pdebug(DEBUG_INFO,"Starting.");
 
     /* punt if wrapped call failed. */
     if(prev_rc != PLCTAG_STATUS_OK) {
-        return rc;
+        pdebug(DEBUG_WARN,"Aborting due to previous bad return code.");
+        return prev_rc;
     }
 
     /* get the payload size before we change the buffer. */
@@ -517,6 +585,23 @@ int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
     }
 
     if(rc > 0) {
+        int last_pos = bytebuf_get_cursor(buf);
+
+        rc = bytebuf_set_cursor(buf, 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of data!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Created new packet data:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
+
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+
         rc = PLCTAG_STATUS_OK;
     }
 
@@ -524,6 +609,8 @@ int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
         pdebug(DEBUG_WARN,"Unable to marshal header!");
         return rc;
     }
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return rc;
 }
@@ -591,6 +678,8 @@ int send_eip_packet(sock_p sock, bytebuf_p payload)
     int offset = bytebuf_get_cursor(payload);
 
     pdebug(DEBUG_DETAIL,"Starting.");
+
+    pdebug(DEBUG_DETAIL,"Current cursor position: %d", bytebuf_get_cursor(payload));
 
     pdebug(DEBUG_DETAIL,"Sending packet:");
     pdebug_dump_bytes(DEBUG_DETAIL,bytebuf_get_buffer(payload), bytebuf_get_size(payload));
@@ -771,9 +860,9 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
 
     /* get the index of the IOI length. */
     ioi_length_index = bytebuf_get_cursor(buf);
-    rc = bytebuf_marshal(buf, BB_U8, 0); /* place holder */
+    rc = bytebuf_marshal(buf, BB_U16, 0); /* place holder */
     if(rc < PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Bad IOI path format to PLC!");
+        pdebug(DEBUG_WARN,"Unable to inject place hodler for IOI length!");
         mem_free(links);
         return rc;
     }
@@ -791,7 +880,7 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
         }
 
         rc = bytebuf_marshal(buf, BB_U8, (uint8_t)tmp);
-        if(rc != PLCTAG_STATUS_OK) {
+        if(rc < PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to inject new path element!");
             mem_free(links);
             return rc;
@@ -824,7 +913,7 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
     }
 
     /* set the length.   NOTE: in 16-bit words! */
-    rc = bytebuf_marshal(buf, BB_U8, (uint8_t)(ioi_size/2));
+    rc = bytebuf_marshal(buf, BB_U16, (uint8_t)(ioi_size/2));
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Bad IOI path format to PLC!");
         return rc;
