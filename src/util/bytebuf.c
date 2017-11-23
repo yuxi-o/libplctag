@@ -115,6 +115,7 @@ bytebuf_p bytebuf_create(int initial_cap, uint32_t bo_int16, uint32_t bo_int32, 
 int bytebuf_set_cursor(bytebuf_p buf, int cursor)
 {
     int new_cap = cursor;
+    int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_SPEW,"Starting to move cursor to %d", cursor);
 
@@ -126,9 +127,10 @@ int bytebuf_set_cursor(bytebuf_p buf, int cursor)
     /* if the cursor went off the front end of the buffer, we need to expand accordingly. */
     new_cap = (cursor < 0 ? (buf->size + (-cursor)) : cursor+1);
 
-    if(!bytebuf_set_capacity(buf, new_cap) == PLCTAG_STATUS_OK) {
+    rc = bytebuf_set_capacity(buf, new_cap);
+    if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR, "Unable to expand byte buffer capacity!");
-        return PLCTAG_ERR_NO_MEM;
+        return rc;
     }
 
     if(cursor < 0) {
@@ -857,235 +859,6 @@ int bytebuf_destroy(bytebuf_p buf)
 
 
 
-//~ int get_int8(bytebuf_p buf, int8_t *val)
-//~ {
-    //~ int64_t tmp;
-    //~ int rc;
-
-    //~ rc = get_int(buf, 1, 0x00, &tmp);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ *val = 0;
-        //~ return rc;
-    //~ }
-
-    //~ *val = (int8_t)tmp;
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-
-//~ int set_int8(bytebuf_p buf, int8_t val)
-//~ {
-    //~ int64_t tmp = (int64_t)val;
-
-    //~ return set_int(buf, 1, 0x00, tmp);
-//~ }
-
-
-
-
-
-//~ int get_int16(bytebuf_p buf, int16_t *val)
-//~ {
-    //~ int64_t tmp;
-    //~ int rc;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ rc = get_int(buf, 2, buf->bo_int16, &tmp);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ *val = 0;
-        //~ return rc;
-    //~ }
-
-    //~ *val = (int16_t)tmp;
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-
-//~ int set_int16(bytebuf_p buf, int16_t val)
-//~ {
-    //~ int64_t tmp = (int64_t)val;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ return set_int(buf, 2, buf->bo_int16, tmp);
-//~ }
-
-
-
-
-
-
-
-//~ int get_int32(bytebuf_p buf, int32_t *val)
-//~ {
-    //~ int64_t tmp;
-    //~ int rc;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ rc = get_int(buf, 4, buf->bo_int32, &tmp);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ *val = 0;
-        //~ return rc;
-    //~ }
-
-    //~ *val = (int32_t)tmp;
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-
-//~ int set_int32(bytebuf_p buf, int32_t val)
-//~ {
-    //~ int64_t tmp = (int64_t)val;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ return set_int(buf, 4, buf->bo_int32, tmp);
-//~ }
-
-
-
-
-
-
-//~ int get_int64(bytebuf_p buf, int64_t *val)
-//~ {
-    //~ int rc;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ rc = get_int(buf, 8, buf->bo_int64, val);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ *val = 0;
-        //~ return rc;
-    //~ }
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-
-//~ int set_int64(bytebuf_p buf, int64_t val)
-//~ {
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ return set_int(buf, 8, buf->bo_int64, val);
-//~ }
-
-
-
-
-
-
-//~ int get_float32(bytebuf_p buf, float *val)
-//~ {
-    //~ int64_t tmp64 = 0;
-    //~ int rc;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ rc = get_int(buf, 4, buf->bo_float32, &tmp64);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ *val = 0.0;
-        //~ return rc;
-    //~ }
-
-    //~ int32_t tmp32 = (int32_t)tmp64;
-
-    //~ mem_copy(val, &tmp32, (sizeof(*val) < sizeof(tmp32) ? sizeof(*val) : sizeof(tmp32)));
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-//~ int set_float32(bytebuf_p buf, float val)
-//~ {
-    //~ int64_t tmp64 = 0;
-    //~ int32_t tmp32 = 0;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ mem_copy(&tmp32, &val, (sizeof(val) < sizeof(tmp32) ? sizeof(val) : sizeof(tmp32)));
-
-    //~ tmp64 = (int64_t)tmp32;
-
-    //~ return set_int(buf, 4, buf->bo_float32, tmp64);
-
-//~ }
-
-
-
-
-
-
-
-//~ int get_float64(bytebuf_p buf, double *val)
-//~ {
-    //~ int64_t tmp64 = 0;
-    //~ int rc;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ rc = get_int(buf, 8, buf->bo_float64, &tmp64);
-    //~ if(rc != PLCTAG_STATUS_OK) {
-        //~ *val = 0.0;
-        //~ return rc;
-    //~ }
-
-    //~ mem_copy(val, &tmp64, (sizeof(*val) < sizeof(tmp64) ? sizeof(*val) : sizeof(tmp64)));
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-//~ int set_float64(bytebuf_p buf, double val)
-//~ {
-    //~ int64_t tmp64 = 0;
-
-    //~ if(!buf) {
-        //~ pdebug(DEBUG_WARN,"Buffer pointer is NULL!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ mem_copy(&tmp64, &val, (sizeof(val) < sizeof(tmp64) ? sizeof(val) : sizeof(tmp64)));
-
-    //~ return set_int(buf, 8, buf->bo_float64, tmp64);
-//~ }
-
-
-
-
-
-
-
 #define BYTE_ORDER_VAL(bo, i) (((uint32_t)bo >> (i*4)) & (uint32_t)0xf)
 
 
@@ -1133,6 +906,8 @@ int get_int(bytebuf_p buf, int size, uint32_t bo, int64_t *val)
 
 int set_int(bytebuf_p buf, int size, uint32_t bo, int64_t val)
 {
+    int rc = PLCTAG_STATUS_OK;
+
     pdebug(DEBUG_SPEW,"Starting.");
 
     if(!buf) {
@@ -1141,7 +916,8 @@ int set_int(bytebuf_p buf, int size, uint32_t bo, int64_t val)
     }
 
     /* make sure we have the capacity to set this int */
-    if(!bytebuf_set_capacity(buf, buf->cursor + size) == PLCTAG_STATUS_OK) {
+    rc = bytebuf_set_capacity(buf, buf->cursor + size);
+    if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_ERROR, "Unable to expand byte buffer capacity!");
         return PLCTAG_ERR_NO_MEM;
     }
