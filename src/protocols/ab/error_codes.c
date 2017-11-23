@@ -20,6 +20,7 @@
 
 #include <platform.h>
 #include <ab/error_codes.h>
+#include <util/debug.h>
 
 struct error_code_entry {
     uint8_t primary_code;
@@ -168,10 +169,14 @@ static struct error_code_entry error_code_table[] = {
 const char *decode_cip_error(uint8_t primary_code, uint32_t secondary_code, int short_or_long)
 {
     int index = 0;
+    const char *result = NULL;
+
+    //~ pdebug(DEBUG_DETAIL,"Called with primary_code=%x, secondary_code=%x", primary_code, secondary_code);
 
     while(error_code_table[index].primary_code != 0) {
         if(error_code_table[index].primary_code == primary_code) {
             if(error_code_table[index].secondary_code == secondary_code || error_code_table[index].secondary_code == 0) {
+                //~ pdebug(DEBUG_DETAIL,"Found entry at index %d",index);
                 break;
             }
         }
@@ -179,5 +184,13 @@ const char *decode_cip_error(uint8_t primary_code, uint32_t secondary_code, int 
         index++;
     }
 
-    return (short_or_long ? error_code_table[index].short_desc : error_code_table[index].long_desc);
+    result = (short_or_long ? error_code_table[index].short_desc : error_code_table[index].long_desc);
+
+    //~ if(!result || str_length(result) == 0) {
+        //~ pdebug(DEBUG_WARN,"Result is null or zero length!");
+    //~ } else {
+        //~ pdebug(DEBUG_DETAIL,"Result = %s",result);
+    //~ }
+
+    return result;
 }
