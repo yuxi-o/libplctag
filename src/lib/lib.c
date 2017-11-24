@@ -289,7 +289,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
         return PLCTAG_ERR_NO_MEM;
     }
 
-    tag->create_in_flight = 1;
+    //~ tag->create_in_flight = 1;
     tag->attribs = attribs;
 
     /* set up the mutexes */
@@ -325,7 +325,7 @@ LIB_EXPORT tag_id plc_tag_create(const char *attrib_str, int timeout)
      */
 
     plc_type = attr_get_str(attribs, "plc", "NONE");
-    if(str_cmp_i(plc_type,"logix") == 0) {
+    if(str_cmp_i(plc_type,"ab controllogix") == 0) {
         /* Allen-Bradley ControlLogix or CompactLogix PLC */
         rc = logix_tag_create(tag);
     } else if(str_cmp_i(plc_type, "system") == 0) {

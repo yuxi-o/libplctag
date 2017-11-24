@@ -200,10 +200,11 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
                         BB_U16, (uint16_t)start_instance,
-                        BB_U16, (uint16_t)2, /* get two attributes. */
+                        BB_U16, (uint16_t)3, /* get two attributes. */
                         BB_U16, 0x1, /* MAGIC - attribute #1 is the symbol name. */
-                        BB_U16, 0x2  /* MAGIC - attribute #2 is the symbol type. */
-                        );
+                        BB_U16, 0x2,  /* MAGIC - attribute #2 is the symbol type. */
+                        BB_U16, 0x3 /* test this. */
+                       );
 
     if(rc > 0) {
         int last_pos = bytebuf_get_cursor(buf);
@@ -234,9 +235,11 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
 
 
 
-int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count)
+int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset)
 {
     int rc = PLCTAG_STATUS_OK;
+
+    (void)offset;
 
     /* inject the read command byte */
     rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ);
@@ -258,6 +261,23 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count)
         pdebug(DEBUG_WARN,"Unable to set number of elements to read!");
         return rc;
     } else {
+        int last_pos = bytebuf_get_cursor(buf);
+
+        rc = bytebuf_set_cursor(buf, 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Created new packet data:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos);
+
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+
         rc = PLCTAG_STATUS_OK;
     }
 
@@ -265,13 +285,11 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count)
 }
 
 
-int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf)
+int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf, int offset)
 {
     int rc = PLCTAG_STATUS_OK;
     uint8_t type_byte;
     uint8_t type_length_byte;
-
-    (void) tag_buf;
 
     if(prev_rc != PLCTAG_STATUS_OK) {
         return prev_rc;
@@ -305,6 +323,29 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf)
         pdebug(DEBUG_WARN, "Unsupported data type returned, type byte=%d", (int)type_byte);
         return PLCTAG_ERR_UNSUPPORTED;
     }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error seeking past type information!");
+        return rc;
+    }
+
+    /* copy data from response into tag. */
+
+    /* make sure there is space. */
+    rc = bytebuf_set_cursor(tag_buf, offset + bytebuf_get_size(buf) - bytebuf_get_cursor(buf));
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error adding capacity/size to tag!");
+        return rc;
+    }
+
+    /* set the cursor back to where we want to copy. */
+    rc = bytebuf_set_cursor(tag_buf, offset);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error seeking to offset in tag!");
+        return rc;
+    }
+
+    mem_copy(bytebuf_get_buffer(tag_buf), bytebuf_get_buffer(buf), bytebuf_get_size(buf) - bytebuf_get_cursor(buf));
 
     return rc;
 }
@@ -466,6 +507,8 @@ int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_serv
     uint8_t dummy_byte = 0;
     uint8_t status_words = 0;
 
+    pdebug(DEBUG_DETAIL,"Starting.");
+
     /*
     The CM Unconnected reply packet looks like this:
 
@@ -481,6 +524,7 @@ int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_serv
 
     /* abort if the wrapped call was not good. */
     if(prev_rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Aborting because previous unmarshalling failed.");
         return rc;
     }
 
@@ -521,6 +565,8 @@ int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_serv
     } else {
         *extended_status = 0;
     }
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return rc;
 }
@@ -642,8 +688,11 @@ int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
     ... payload ...
     */
 
+    pdebug(DEBUG_DETAIL, "Starting.");
+
     /* abort if the wrapped function failed. */
     if(prev_rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Aborting because previous call failed.");
         return prev_rc;
     }
 
@@ -661,6 +710,8 @@ int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
         pdebug(DEBUG_WARN,"Unable to marshal header!");
         return rc;
     }
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
