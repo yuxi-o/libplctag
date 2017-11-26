@@ -145,7 +145,7 @@ int bytebuf_set_cursor(bytebuf_p buf, int cursor)
     } else {
         if(cursor > buf->size) {
             buf->size = cursor;
-            pdebug(DEBUG_SPEW,"Increasing size (%d) based on new cursor (%d).", buf->size, cursor);
+            pdebug(DEBUG_DETAIL,"Increasing size (%d) based on new cursor (%d).", buf->size, cursor);
         }
     }
 
@@ -192,7 +192,7 @@ int bytebuf_set_capacity(bytebuf_p buf, int cap)
         return PLCTAG_STATUS_OK;
     }
 
-    pdebug(DEBUG_SPEW,"Allocating more buffer space.");
+    pdebug(DEBUG_DETAIL,"Allocating more buffer space.");
 
     /* need to allocate more memory */
     bytes = mem_alloc(new_cap);
@@ -207,7 +207,9 @@ int bytebuf_set_capacity(bytebuf_p buf, int cap)
 
     buf->bytes = bytes;
 
-    pdebug(DEBUG_SPEW,"Done.");
+    buf->capacity = new_cap;
+
+    pdebug(DEBUG_DETAIL,"Done.");
 
     return PLCTAG_STATUS_OK;
 }
@@ -783,6 +785,10 @@ int bytebuf_get_size(bytebuf_p buf)
     }
 
     pdebug(DEBUG_SPEW,"Done size = %d", buf->size);
+
+    if(buf->size > buf->capacity) {
+        pdebug(DEBUG_WARN,"Size is greater than capacity!");
+    }
 
     return buf->size;
 }
