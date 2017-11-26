@@ -388,7 +388,7 @@ LIB_EXPORT int plc_tag_lock(tag_id id)
 
     pdebug(DEBUG_INFO, "Starting.");
 
-        tag = get_tag(id);
+    tag = get_tag(id);
 
     if(!tag) {
         pdebug(DEBUG_WARN,"Tag %d not found.", id);
