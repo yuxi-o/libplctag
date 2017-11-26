@@ -128,6 +128,10 @@ void *rc_alloc_impl(const char *func, int line_num, int data_size, int extra_arg
     pdebug(DEBUG_INFO, "Done");
 
     /* return the original address if successful otherwise NULL. */
+
+    /* DEBUG */
+    pdebug(DEBUG_DETAIL,"Returning memory pointer %p",(void *)(rc + 1));
+
     return (void *)(rc + 1);
 }
 
@@ -147,10 +151,10 @@ int rc_register_cleanup_impl(const char *func, int line_num, void *data, rc_clea
     refcount_p rc = NULL;
     va_list extra_args;
 
-    pdebug(DEBUG_INFO,"Starting, called from %s:%d",func, line_num);
+    pdebug(DEBUG_INFO,"Starting, called from %s:%d for memory pointer %p",func, line_num, data);
 
     if(!data) {
-        pdebug(DEBUG_WARN,"Invalid pointer passed!");
+        pdebug(DEBUG_WARN,"Invalid pointer passed at %s:%d!",func, line_num);
         return PLCTAG_ERR_NULL_PTR;
     }
 
@@ -168,7 +172,7 @@ int rc_register_cleanup_impl(const char *func, int line_num, void *data, rc_clea
             va_end(extra_args);
 
             if(!entry) {
-                pdebug(DEBUG_ERROR,"Unable to allocated cleanup entry!");
+                pdebug(DEBUG_ERROR,"Unable to allocate cleanup entry!");
                 status = PLCTAG_ERR_NO_MEM;
             } else {
                 entry->next = rc->cleaners;
@@ -208,10 +212,10 @@ void *rc_inc_impl(const char *func, int line_num, void *data)
     refcount_p rc = NULL;
     void *  result = NULL;
 
-    pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
+    pdebug(DEBUG_DETAIL,"Starting, called from %s:%d for %p",func, line_num, data);
 
     if(!data) {
-        pdebug(DEBUG_WARN,"Invalid pointer passed!");
+        pdebug(DEBUG_WARN,"Invalid pointer passed from %s:%d!", func, line_num);
         return result;
     }
 
@@ -238,7 +242,7 @@ void *rc_inc_impl(const char *func, int line_num, void *data)
     if(!result) {
         pdebug(DEBUG_WARN,"Invalid ref from call at %s line %d!  Unable to take strong reference.", func, line_num);
     } else {
-        pdebug(DEBUG_SPEW,"Ref count is %d.", count);
+        pdebug(DEBUG_DETAIL,"Ref count is %d for %p.", count, data);
     }
 
     /* return the result pointer. */
@@ -264,10 +268,10 @@ void *rc_dec_impl(const char *func, int line_num, void *data)
     int invalid = 0;
     refcount_p rc = NULL;
 
-    pdebug(DEBUG_SPEW,"Starting, called from %s:%d",func, line_num);
+    pdebug(DEBUG_DETAIL,"Starting, called from %s:%d for %p",func, line_num, data);
 
     if(!data) {
-        pdebug(DEBUG_WARN,"Null reference passed!");
+        pdebug(DEBUG_WARN,"Null reference passed from %s:%d!", func, line_num);
         return NULL;
     }
 
@@ -290,11 +294,11 @@ void *rc_dec_impl(const char *func, int line_num, void *data)
     /* release the lock so that other things can get to it. */
     lock_release(&rc->lock);
 
-    pdebug(DEBUG_SPEW,"Ref count is %d.", count);
+    pdebug(DEBUG_DETAIL,"Ref count is %d for %p.", count, data);
 
     /* clean up only if count is zero. */
     if(rc && !invalid && count <= 0) {
-        pdebug(DEBUG_DETAIL,"Calling cleanup functions.");
+        pdebug(DEBUG_DETAIL,"Calling cleanup functions due to call at %s:%d for %p.", func, line_num, data);
 
         refcount_cleanup(rc);
     }
@@ -377,69 +381,3 @@ void cleanup_entry_destroy(cleanup_p entry)
     pdebug(DEBUG_DETAIL,"Done.");
 }
 
-
-
-
-//~ int refcount_service_init()
-//~ {
-    //~ int rc = PLCTAG_STATUS_OK;
-
-    //~ pdebug(DEBUG_INFO,"Starting.");
-
-    //~ rc = mutex_create((mutex_p *)&refcount_mutex);
-    //~ if(!rc == PLCTAG_STATUS_OK) {
-        //~ pdebug(DEBUG_ERROR,"Unable to create refcount mutex!");
-        //~ return rc;
-    //~ }
-
-    //~ references = hashtable_create(512);  /* MAGIC */
-    //~ if(!references) {
-        //~ pdebug(DEBUG_ERROR,"Unable to create refcount hashtable!");
-        //~ return PLCTAG_ERR_CREATE;
-    //~ }
-
-    //~ pdebug(DEBUG_INFO,"Done.");
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-
-
-
-//~ int refcount_cleanup_entry_destroy(hashtable_p table, void *key, int key_len, void **data)
-//~ {
-    //~ if(!table) {
-        //~ pdebug(DEBUG_WARN,"Null table pointer!");
-        //~ return PLCTAG_ERR_NULL_PTR;
-    //~ }
-
-    //~ if(!key || key_len <= 0) {
-        //~ pdebug(DEBUG_WARN,"Key is null or zero length!");
-        //~ return PLCTAG_ERR_BAD_DATA;
-    //~ }
-
-    //~ if(*data) {
-        //~ /* this is a refcount struct. */
-        //~ refcount_p rc = *data;
-
-        //~ pdebug(DEBUG_WARN,"Entry still exists for data %p created in function %s at line %d",rc->data, rc->function_name, rc->line_num);
-
-        //~ refcount_cleanup(rc);
-    //~ }
-
-    //~ return PLCTAG_STATUS_OK;
-//~ }
-
-
-
-//~ void refcount_service_teardown()
-//~ {
-    //~ pdebug(DEBUG_INFO, "Starting");
-
-    //~ /* get rid of the refcount structs. */
-    //~ hashtable_on_each(references, refcount_cleanup_entry_destroy);
-
-    //~ hashtable_destroy(references);
-
-    //~ pdebug(DEBUG_INFO,"Done.");
-//~ }
