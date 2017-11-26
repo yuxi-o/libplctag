@@ -200,10 +200,9 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
                         BB_U16, (uint16_t)start_instance,
-                        BB_U16, (uint16_t)3, /* get two attributes. */
+                        BB_U16, (uint16_t)2, /* get two attributes. */
                         BB_U16, 0x1, /* MAGIC - attribute #1 is the symbol name. */
-                        BB_U16, 0x2,  /* MAGIC - attribute #2 is the symbol type. */
-                        BB_U16, 0x3 /* test this. */
+                        BB_U16, 0x2  /* MAGIC - attribute #2 is the symbol type. */
                        );
 
     if(rc > 0) {
@@ -242,7 +241,7 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
     (void)offset;
 
     /* inject the read command byte */
-    rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ);
+    rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ_FRAG);
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set CIP command to read in buffer!");
         return rc;
@@ -257,6 +256,13 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
 
     /* set the element count to read. */
     rc = bytebuf_marshal(buf, BB_U16, (uint16_t)elem_count);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set number of elements to read!");
+        return rc;
+    }
+
+    /* set the offset to read. */
+    rc = bytebuf_marshal(buf, BB_U32, (uint32_t)offset);
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set number of elements to read!");
         return rc;
@@ -285,7 +291,7 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
 }
 
 
-int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf, int offset)
+int unmarshal_cip_read(int prev_rc, bytebuf_p buf)
 {
     int rc = PLCTAG_STATUS_OK;
     uint8_t type_byte;
@@ -328,24 +334,6 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf, bytebuf_p tag_buf, int offset
         pdebug(DEBUG_WARN, "Error seeking past type information!");
         return rc;
     }
-
-    /* copy data from response into tag. */
-
-    /* make sure there is space. */
-    rc = bytebuf_set_cursor(tag_buf, offset + bytebuf_get_size(buf) - bytebuf_get_cursor(buf));
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN, "Error adding capacity/size to tag!");
-        return rc;
-    }
-
-    /* set the cursor back to where we want to copy. */
-    rc = bytebuf_set_cursor(tag_buf, offset);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN, "Error seeking to offset in tag!");
-        return rc;
-    }
-
-    mem_copy(bytebuf_get_buffer(tag_buf), bytebuf_get_buffer(buf), bytebuf_get_size(buf) - bytebuf_get_cursor(buf));
 
     return rc;
 }
@@ -732,7 +720,7 @@ int send_eip_packet(sock_p sock, bytebuf_p payload)
 
     pdebug(DEBUG_DETAIL,"Current cursor position: %d", bytebuf_get_cursor(payload));
 
-    pdebug(DEBUG_DETAIL,"Sending packet:");
+    pdebug(DEBUG_DETAIL,"Sending packet of size %d:", bytebuf_get_size(payload));
     pdebug_dump_bytes(DEBUG_DETAIL,bytebuf_get_buffer(payload), bytebuf_get_size(payload));
 
     /* send the data. */
@@ -1016,9 +1004,9 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
     int word_count_index = 0;
     int word_count = 0;
     int symbol_len_index = 0;
-    int symbol_len;
+    int symbol_len = 0;
     int tmp_index = 0;
-    int state;
+    int state = START;
     int rc = PLCTAG_STATUS_OK;
 
     /* point to location of word count. */
@@ -1191,9 +1179,10 @@ int cip_encode_tag_name(bytebuf_p buf, const char *name)
                     while(isspace(*p)) p++;
                 } while(*p == ',');
 
-                if(*p != ']')
+                if(*p != ']') {
                     pdebug(DEBUG_WARN,"Incorrect array format, must have closing ] character.");
                     return PLCTAG_ERR_BAD_PARAM;
+                }
 
                 p++;
 
