@@ -33,8 +33,8 @@ extern int rc_thread_check_abort(void);
 
 
 /* needed for set up of the rc_thread service */
-extern int rc_thread_service_init(void);
-extern void rc_thread_service_teardown(void);
+//~ extern int rc_thread_service_init(void);
+//~ extern void rc_thread_service_teardown(void);
 
 
 #endif
