@@ -2039,13 +2039,13 @@ int initialize_modules(void)
             }
         }
 
-        if(rc == PLCTAG_STATUS_OK) {
-            rc = rc_thread_service_init();
+        //~ if(rc == PLCTAG_STATUS_OK) {
+            //~ rc = rc_thread_service_init();
 
-            if(rc != PLCTAG_STATUS_OK) {
-                pdebug(DEBUG_ERROR,"RCThread utility failed to initialize correctly!");
-            }
-        }
+            //~ if(rc != PLCTAG_STATUS_OK) {
+                //~ pdebug(DEBUG_ERROR,"RCThread utility failed to initialize correctly!");
+            //~ }
+        //~ }
 
         //~ if(rc == PLCTAG_STATUS_OK) {
             //~ rc = ab_init();
@@ -2083,7 +2083,7 @@ void teardown_modules(void)
 {
     //~ ab_teardown();
 
-    rc_thread_service_teardown();
+    //~ rc_thread_service_teardown();
 
     resource_service_teardown();
 
