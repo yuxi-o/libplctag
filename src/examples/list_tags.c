@@ -53,7 +53,7 @@ int main(int argc, char **argv)
         usage();
     }
 
-    snprintf(tag_string, TAG_STRING_SIZE-1,"plc=AB ControlLogix&path=%s&tag=@tags&debug=3",argv[1]);
+    snprintf(tag_string, TAG_STRING_SIZE-1,"plc=AB ControlLogix&path=%s&tag=@tags&debug=4",argv[1]);
 
     printf("Using tag string: %s\n", tag_string);
 
@@ -71,12 +71,37 @@ int main(int argc, char **argv)
 
     do {
         uint32_t tag_instance_id = 0;
-        uint16_t tag_name_len =0;
         uint16_t tag_type = 0;
+        uint16_t element_length = 0;
+        uint16_t tag_name_len = 0;
+        uint32_t array_dims[3] = {0,};
         char tag_name[TAG_STRING_SIZE * 2] = {0,};
+
+        /* each entry looks like this:
+        uint32_t instance_id    monotonically increasing but not contiguous
+        uint16_t symbol_type    type of the symbol.
+        uint16_t element_length length of one array element in bytes.
+        uint32_t array_dims[3]  array dimensions.
+        uint16_t string_len     string length count.
+        uint8_t[] string_data   string bytes (string_len of them)
+        */
 
         tag_instance_id = plc_tag_get_int32(tag, offset);
         offset += 4;
+
+        tag_type = plc_tag_get_int16(tag, offset);
+        offset += 2;
+
+        element_length = plc_tag_get_int16(tag, offset);
+        offset += 2;
+
+        array_dims[0] = plc_tag_get_uint32(tag, offset);
+        offset += 4;
+        array_dims[1] = plc_tag_get_uint32(tag, offset);
+        offset += 4;
+        array_dims[2] = plc_tag_get_uint32(tag, offset);
+        offset += 4;
+
         tag_name_len = plc_tag_get_int16(tag, offset);
         offset += 2;
 
@@ -86,10 +111,7 @@ int main(int argc, char **argv)
             tag_name[i+1] = 0;
         }
 
-        tag_type = plc_tag_get_int16(tag, offset);
-        offset += 2;
-
-        printf("Tag name=%s, tag instance ID=%x, tag type=%x\n",tag_name, tag_instance_id, tag_type);
+        printf("Tag name=%s, tag instance ID=%x, tag type=%x, element length (in bytes) = %d, array dimensions = (%d, %d, %d)\n",tag_name, tag_instance_id, tag_type, (int)element_length, (int)array_dims[0], (int)array_dims[1], (int)array_dims[2]);
     } while(rc == PLCTAG_STATUS_OK && offset < plc_tag_get_size(tag));
 
     plc_tag_destroy(tag);

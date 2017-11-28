@@ -186,9 +186,11 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     uint8_t   0x00    padding
     uint8_t   0x00    instance byte 0
     uint8_t   0x00    instance byte 1
-    uint16_t  0x02    number of attributes to get
-    uint16_t  0x01    attribute #1 - symbol name
+    uint16_t  0x04    number of attributes to get
     uint16_t  0x02    attribute #2 - symbol type
+    uint16_t  0x07    attribute #7 - base type size (array element) in bytes
+    uint16_t  0x08    attribute #8 - array dimensions (3xu32)
+    uint16_t  0x01    attribute #1 - symbol name
     */
 
     int rc = PLCTAG_STATUS_OK;
@@ -200,9 +202,11 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
                         BB_U16, (uint16_t)start_instance,
-                        BB_U16, (uint16_t)2, /* get two attributes. */
-                        BB_U16, 0x1, /* MAGIC - attribute #1 is the symbol name. */
-                        BB_U16, 0x2  /* MAGIC - attribute #2 is the symbol type. */
+                        BB_U16, (uint16_t)4, /* get two attributes. */
+                        BB_U16, 0x2,  /* MAGIC - attribute #2 is the symbol type. */
+                        BB_U16, 0x7,  /* MAGIC - byte count, size of one tag element in bytes. */
+                        BB_U16, 0x8,   /* array dimensions */
+                        BB_U16, 0x1    /* MAGIC - attribute #1 is the symbol name. */
                        );
 
     if(rc > 0) {

@@ -36,6 +36,8 @@
 struct logix_tag_info_t {
     uint32_t instance_id;
     uint16_t type_info;
+    uint32_t element_length;
+    uint32_t array_dims[3];
 };
 
 typedef struct logix_tag_info_t *logix_tag_info_p;
@@ -710,18 +712,11 @@ int process_request(logix_plc_p plc)
 
     /* get a request from the queue. */
     critical_block(plc->mutex) {
-        //~ request = vector_remove(plc->requests, 0);
-        request = vector_get(plc->requests, 0);
-
-        /* set the status to pending if we are processing a generic request. */
-        //~ if(request && request_get_tag(request) == NULL) {
-            //~ plc->status = PLCTAG_STATUS_PENDING;
-        //~ } else {
-            //~ /* If there are no more requests... */
-            //~ if(plc->status == PLCTAG_STATUS_PENDING) {
-                //~ plc->status = PLCTAG_STATUS_OK;
-            //~ }
-        //~ }
+        if(vector_length(plc->requests) > 0) {
+            request = vector_get(plc->requests, 0);
+        } else {
+            request = NULL;
+        }
     }
 
     if(request) {
@@ -953,10 +948,12 @@ int process_write_request(logix_plc_p plc, logix_request_p request)
 int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, uint32_t *last_instance_id)
 {
     int rc = PLCTAG_STATUS_OK;
-    int32_t instance_id;
-    uint16_t string_len;
+    int32_t instance_id = 0;
+    uint16_t symbol_type = 0;
+    uint16_t element_length = 0;
+    uint32_t array_dims[3] = {0,};
+    uint16_t string_len  = 0;
     char symbol_name[128] = {0,};
-    uint16_t symbol_type;
     logix_tag_info_p tag_info = NULL;
 
     pdebug(DEBUG_DETAIL,"Starting.");
@@ -968,12 +965,21 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
 
     /* each entry looks like this:
     uint32_t instance_id    monotonically increasing but not contiguous
-    uint16_t string_len     string length count
-    uint8_t[] string_data   string bytes (string_len of them)
     uint16_t symbol_type    type of the symbol.
+    uint16_t elem_length    length of tag in bytes.
+    uint32_t array_dims[3]  array dimensions.
+    uint16_t string_len     string length count.
+    uint8_t[] string_data   string bytes (string_len of them)
     */
 
-    rc = bytebuf_unmarshal(buf, BB_U32, &instance_id, BB_U16, &string_len);
+    rc = bytebuf_unmarshal(buf,
+                           BB_U32, &instance_id,
+                           BB_U16, &symbol_type,
+                           BB_U16, &element_length,
+                           BB_U32, &array_dims[0],
+                           BB_U32, &array_dims[1],
+                           BB_U32, &array_dims[2],
+                           BB_U16, &string_len);
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to get instance ID or string length!");
         return rc;
@@ -982,7 +988,7 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     /* save this for later */
     *last_instance_id = instance_id;
 
-    pdebug(DEBUG_DETAIL,"instance ID = %d, symbol name length = %d",instance_id, (int)string_len);
+    //~ pdebug(DEBUG_DETAIL,"instance ID = %d, symbol name length = %d",instance_id, (int)string_len);
 
     /* copy the name for printing */
     rc = bytebuf_unmarshal(buf, BB_BYTES, symbol_name, ((sizeof(symbol_name)-1) < ((size_t)string_len) ? sizeof(symbol_name)-1 : (size_t)string_len));
@@ -991,14 +997,14 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
         return rc;
     }
 
-    /* get the symbol type */
-    rc = bytebuf_unmarshal(buf, BB_U16, &symbol_type);
-    if(rc < PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to get symbol type!");
-        return rc;
-    }
+    //~ /* get the symbol type */
+    //~ rc = bytebuf_unmarshal(buf, BB_U16, &symbol_type);
+    //~ if(rc < PLCTAG_STATUS_OK) {
+        //~ pdebug(DEBUG_WARN,"Unable to get symbol type!");
+        //~ return rc;
+    //~ }
 
-    pdebug(DEBUG_INFO,"Get symbol entry for \"%s\" with instance ID %x and type %x",symbol_name, (int)instance_id, (int)symbol_type);
+    pdebug(DEBUG_INFO,"Get symbol entry for \"%s\" with instance ID %x and type %x and element length %d and dimensions (%d,%d,%d)",symbol_name, (int)instance_id, (int)symbol_type,(int)element_length, (int)array_dims[0], (int)array_dims[1], (int)array_dims[2]);
 
     /* store the symbol data into the hashtable. */
     tag_info = hashtable_get(tag_info_table, symbol_name, (int)string_len);
@@ -1027,6 +1033,10 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     /* perhaps the instance ID could be different? */
     tag_info->instance_id = instance_id;
     tag_info->type_info = symbol_type;
+    tag_info->element_length = element_length;
+    tag_info->array_dims[0] = array_dims[0];
+    tag_info->array_dims[1] = array_dims[1];
+    tag_info->array_dims[2] = array_dims[2];
 
     return rc;
 }
@@ -1675,14 +1685,20 @@ struct logix_request_t {
 {
     logix_request_p req;
 
+    pdebug(DEBUG_INFO,"Starting.");
+
     req = rc_alloc(sizeof(struct logix_request_t), request_destroy);
     if(!req) {
         pdebug(DEBUG_ERROR,"Unable to allocate new request!");
         return NULL;
     }
 
+    pdebug(DEBUG_DETAIL,"Acquiring reference to tag.");
+
     req->tag = rc_inc(tag);
     req->operation = operation;
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return req;
 }
@@ -1692,6 +1708,8 @@ void request_destroy(void *request_arg, int extra_arg_count, void **extra_args)
 {
     logix_request_p request = request_arg;
 
+    pdebug(DEBUG_INFO,"Starting.");
+
     (void)extra_arg_count;
     (void)extra_args;
 
@@ -1700,7 +1718,13 @@ void request_destroy(void *request_arg, int extra_arg_count, void **extra_args)
         return;
     }
 
-    rc_dec(request->tag);
+    pdebug(DEBUG_DETAIL,"Releasing ref to tag.");
+
+    if(request->tag) {
+        request->tag = rc_dec(request->tag);
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
 
     return;
 }
