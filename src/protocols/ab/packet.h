@@ -76,12 +76,29 @@
 #define AB_CIP_CMD_OK ((uint8_t)0x80)
 
 
-/* CIP embedded packet commands */
-#define AB_CIP_READ             ((uint8_t)0x4C)
-#define AB_CIP_WRITE            ((uint8_t)0x4D)
-#define AB_CIP_READ_FRAG        ((uint8_t)0x52)
-#define AB_CIP_WRITE_FRAG       ((uint8_t)0x53)
+/* somewhat misc constants. */
+#define AB_CIP_SECS_PER_TICK 0x0A
+#define AB_CIP_TIMEOUT_TICKS 0x05
+#define AB_CIP_VENDOR_ID 0xF33D /*tres 1337 */
+#define AB_CIP_VENDOR_SN 0x21504345  /* the string !PCE */
+#define AB_CIP_TIMEOUT_MULTIPLIER 0x01
+#define AB_CIP_RPI  1000000
+#define AB_CIP_PLC5_PARAM 0x4302
+#define AB_CIP_SLC_PARAM 0x4302
+#define AB_CIP_LGX_PARAM 0x43F8
+#define AB_CIP_TRANSPORT 0xA3
 
+#define AB_CIP_TRANSPORT_CLASS_T3   ((uint8_t)0xA3)
+
+
+
+/* CIP embedded packet commands */
+#define AB_CIP_READ                         ((uint8_t)0x4C)
+#define AB_CIP_WRITE                        ((uint8_t)0x4D)
+#define AB_CIP_CMD_FORWARD_CLOSE            ((uint8_t)0x4E)
+#define AB_CIP_CMD_FORWARD_OPEN             ((uint8_t)0x54)
+#define AB_CIP_READ_FRAG                    ((uint8_t)0x52)
+#define AB_CIP_WRITE_FRAG                   ((uint8_t)0x53)
 #define AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST ((uint8_t)0x55)
 
 /* CIP status */
@@ -137,6 +154,9 @@ extern int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *leng
 
 extern int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t option_flags);
 
+extern int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t connection_serial_num, uint16_t conn_params);
+extern int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, uint32_t *ot_connection_id);
+
 extern int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance);
 
 extern int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset);
@@ -144,7 +164,7 @@ extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf);
 
 extern int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
 
-extern int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path);
+extern int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t service_code, const char *ioi_path);
 extern int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status);
 
 extern int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf);

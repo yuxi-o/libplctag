@@ -39,7 +39,7 @@
 
 
 
-static int cip_encode_path(bytebuf_p buf, const char *ioi_path);
+static int cip_encode_path(bytebuf_p buf, const char *ioi_path, bytebuf_arg_type count_type);
 static int cip_encode_tag_name(bytebuf_p buf, const char *name);
 
 
@@ -157,6 +157,9 @@ int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t optio
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
+
+
+
     rc = bytebuf_marshal(buf,
                         BB_U16, eip_version,
                         BB_U16, option_flags
@@ -172,12 +175,140 @@ int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t optio
 }
 
 
+int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t connection_serial_num, uint16_t conn_params)
+{
+    int rc = PLCTAG_STATUS_OK;
+    int first_pos = 0;
+    int last_pos = 0;
+    //~ uint8_t msg_router_path[] = {0x20, 0x02, 0x24, 0x01};
+
+    pdebug(DEBUG_INFO,"Starting.");
+
+    /*
+     Forward Open Params
+    uint32_t orig_to_targ_conn_id;   0, returned by target in reply.
+    uint32_t targ_to_orig_conn_id;   what is _our_ ID for this connection, use ab_connection ptr as id ?
+    uint16_t conn_serial_number;     our connection serial number ??
+    uint16_t orig_vendor_id;         our unique vendor ID
+    uint32_t orig_serial_number;     our unique serial number
+    uint8_t conn_timeout_multiplier; timeout = mult * RPI
+    uint8_t reserved[3];             reserved, set to 0
+    uint32_t orig_to_targ_rpi;       us to target RPI - Request Packet Interval in microseconds
+    uint16_t orig_to_targ_conn_params;  some sort of identifier of what kind of PLC we are???
+    uint32_t targ_to_orig_rpi;       target to us RPI, in microseconds
+    uint16_t targ_to_orig_conn_params;  some sort of identifier of what kind of PLC the target is ???
+    uint8_t transport_class;         ALWAYS 0xA3, server transport, class 3, application trigger
+    */
+    /*
+    uint8_t path_size;               size of connection path in 16-bit words
+                                     * connection path from MSG instruction.
+                                     *
+                                     * EG LGX with 1756-ENBT and CPU in slot 0 would be:
+                                     * 0x01 - backplane port of 1756-ENBT
+                                     * 0x00 - slot 0 for CPU
+                                     * 0x20 - class
+                                     * 0x02 - MR Message Router
+                                     * 0x24 - instance
+                                     * 0x01 - instance #1.
+    */
+
+    first_pos = bytebuf_get_cursor(buf);
+
+    rc = bytebuf_marshal(buf,
+                        BB_U32, 0,                           /* MAGIC, zero for the target's connection ID.  This will be returned. */
+                        BB_U32, connection_id,               /* Our connection ID for this connection. */
+                        BB_U16, connection_serial_num,      /* our connection serial number? */
+                        BB_U16, AB_CIP_VENDOR_ID,            /* our vendor ID, completely fake. */
+                        BB_U32, AB_CIP_VENDOR_SN,            /* our vendor serial number, again, completely fake. */
+                        BB_U8, AB_CIP_TIMEOUT_MULTIPLIER,    /* timeout = multiplier * RPI.  Ignored on Type 3 connections? */
+                        BB_U8, 0,                            /* reserved */
+                        BB_U8, 0,                            /* reserved */
+                        BB_U8, 0,                            /* reserved */
+                        BB_U32, AB_CIP_RPI,                  /* us to target RPI - requested packet interval in microseconds. */
+                        BB_U16, conn_params,                  /* defines some things (what?) about the connection. Lower 9 bits are max payload size? */
+                        BB_U32, AB_CIP_RPI,                  /* target to us RPI - not really used on T3 connections? */
+                        BB_U16, conn_params,                  /* defines some things about the connection.   Lower 9 bits are max payload size? */
+                        BB_U8, AB_CIP_TRANSPORT_CLASS_T3     /* server transport, class 3 (TCP, explicit messaging), application trigger. */
+                        );
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal forward open request!");
+        return rc;
+    }
+
+    last_pos = bytebuf_get_cursor(buf);
+
+    rc = bytebuf_set_cursor(buf, first_pos);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+        return rc;
+    }
+
+    pdebug(DEBUG_DETAIL,"Created new packet data:");
+    pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos - first_pos);
+
+    rc = bytebuf_set_cursor(buf, last_pos);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+        return rc;
+    }
+
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
+
+
+int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, uint32_t *ot_connection_id)
+{
+    int rc = PLCTAG_STATUS_OK;
+    uint16_t conn_serial_number = 0;
+    uint16_t orig_vendor_id = 0;
+    uint32_t orig_serial_number = 0;
+    uint32_t orig_to_targ_api = 0;
+    uint32_t targ_to_orig_api = 0;
+    uint8_t app_data_size = 0;
+    uint8_t reserved = 0;
+
+    /*
+     Forward Open response
+    uint32_t orig_to_targ_conn_id;   target's connection ID for us, save this.
+    uint32_t targ_to_orig_conn_id;   our connection ID back for reference
+    uint16_t conn_serial_number;     our connection serial number from request
+    uint16_t orig_vendor_id;         our unique vendor ID from request
+    uint32_t orig_serial_number;     our unique serial number from request
+    uint32_t orig_to_targ_api;       Actual packet interval, microsecs
+    uint32_t targ_to_orig_api;       Actual packet interval, microsecs
+    uint8_t app_data_size;           size in 16-bit words of send_data at end
+    uint8_t reserved;
+    */
+
+    rc = bytebuf_unmarshal(buf,
+                           BB_U32, to_connection_id,
+                           BB_U32, ot_connection_id,
+                           BB_U16, &conn_serial_number,
+                           BB_U16, &orig_vendor_id,
+                           BB_U32, &orig_serial_number,
+                           BB_U32, &orig_to_targ_api,
+                           BB_U32, &targ_to_orig_api,
+                           BB_U8,  &app_data_size,
+                           BB_U8,  &reserved
+                           );
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to unmarshal forward open response!");
+        return rc;
+    }
+
+    return PLCTAG_STATUS_OK;
+}
 
 
 
 int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
 {
     /* packet format is as follows:
+    uint16_t packet_size        packet size in bytes
     uint8_t request_service    0x55
     uint8_t request_path_size  3 - 6 bytes
     uint8_t   0x20    get class
@@ -194,12 +325,18 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     */
 
     int rc = PLCTAG_STATUS_OK;
+    uint16_t packet_size = 0;
+    int packet_size_index = 0;
     uint8_t req_path[] = {0x20, 0x6B, 0x25, 0x00};
     int first_pos = bytebuf_get_cursor(buf);
+    int last_pos = 0;
+
+    packet_size_index = bytebuf_get_cursor(buf);
 
     rc = bytebuf_marshal(buf,
+                        BB_U16, packet_size,        /* placeholder for now */
                         BB_U8, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST, /* request service */
-                        BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 4)/2),  /* should be 4 16-bit words */
+                        BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 2)/2),  /* should be 3 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
                         BB_U16, (uint16_t)start_instance,
                         BB_U16, (uint16_t)4, /* get two attributes. */
@@ -208,26 +345,40 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
                         BB_U16, 0x8,   /* array dimensions */
                         BB_U16, 0x1    /* MAGIC - attribute #1 is the symbol name. */
                        );
+    if(rc < 0) {
+        pdebug(DEBUG_WARN,"Unable to marshal packet!");
+        return rc;
+    }
 
-    if(rc > 0) {
-        int last_pos = bytebuf_get_cursor(buf);
+    last_pos = bytebuf_get_cursor(buf);
 
-        rc = bytebuf_set_cursor(buf, first_pos);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
-            return rc;
-        }
+    packet_size = last_pos - packet_size_index - 2; /* remove two for the packet size itself */
 
-        pdebug(DEBUG_DETAIL,"Created new packet data:");
-        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos - first_pos);
+    rc = bytebuf_set_cursor(buf, packet_size_index);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek cursor to packet size field!");
+        return rc;
+    }
 
-        rc = bytebuf_set_cursor(buf, last_pos);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
-            return rc;
-        }
+    rc = bytebuf_marshal(buf, BB_U16, packet_size);
+    if(rc < 0) {
+        pdebug(DEBUG_WARN,"Unable to marshal packet size field!");
+        return rc;
+    }
 
-        rc = PLCTAG_STATUS_OK;
+    rc = bytebuf_set_cursor(buf, first_pos);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+        return rc;
+    }
+
+    pdebug(DEBUG_DETAIL,"Created new packet data:");
+    pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos - first_pos);
+
+    rc = bytebuf_set_cursor(buf, last_pos);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+        return rc;
     }
 
     return rc;
@@ -241,11 +392,24 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
 int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset)
 {
     int rc = PLCTAG_STATUS_OK;
+    int last_pos = 0;
+    int command_size_index = 0;
+    int command_size = 0;
 
-    (void)offset;
+    /*
+      packet has the following format:
+    u16 - packet length
+    u8 - CIP read command
+    u8[] - tag name, encoded
+    u16 - element count
+    u32 - byte offset
+    */
 
-    /* inject the read command byte */
-    rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ_FRAG);
+    /* get the current position for later reset of the packet size. */
+    command_size_index = bytebuf_get_cursor(buf);
+
+    /* inject the size placeholder and read command byte */
+    rc = bytebuf_marshal(buf, BB_U16, command_size, BB_U8, AB_CIP_READ_FRAG);
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set CIP command to read in buffer!");
         return rc;
@@ -259,36 +423,42 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
     }
 
     /* set the element count to read. */
-    rc = bytebuf_marshal(buf, BB_U16, (uint16_t)elem_count);
+    rc = bytebuf_marshal(buf, BB_U16, (uint16_t)elem_count, BB_U32, (uint32_t)offset);
     if(rc < PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set number of elements to read!");
+        pdebug(DEBUG_WARN,"Unable to set number of elements to read or offset!");
         return rc;
     }
 
-    /* set the offset to read. */
-    rc = bytebuf_marshal(buf, BB_U32, (uint32_t)offset);
-    if(rc < PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set number of elements to read!");
+    last_pos = bytebuf_get_cursor(buf);
+
+    command_size = last_pos - command_size_index - 2; /* 2 bytes for the command size itself which is not counted. */
+
+    rc = bytebuf_set_cursor(buf, command_size_index);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to location of packet size field!");
         return rc;
-    } else {
-        int last_pos = bytebuf_get_cursor(buf);
+    }
 
-        rc = bytebuf_set_cursor(buf, 0);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
-            return rc;
-        }
+    rc = bytebuf_marshal(buf, BB_U16, command_size);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set command size!");
+        return rc;
+    }
 
-        pdebug(DEBUG_DETAIL,"Created new packet data:");
-        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos);
+    /* print out the packet */
+    rc = bytebuf_set_cursor(buf, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+        return rc;
+    }
 
-        rc = bytebuf_set_cursor(buf, last_pos);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
-            return rc;
-        }
+    pdebug(DEBUG_DETAIL,"Created new packet data:");
+    pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos);
 
-        rc = PLCTAG_STATUS_OK;
+    rc = bytebuf_set_cursor(buf, last_pos);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+        return rc;
     }
 
     return rc;
@@ -363,11 +533,11 @@ int unmarshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data)
 
 
 
-int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
+int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t cip_service_code, const char *ioi_path)
 {
     int rc = PLCTAG_STATUS_OK;
-    uint8_t mr_path[] = { 0x20, 0x06, 0x24, 0x01 }; /* path to CM */
-    int cip_command_length = 0;
+    uint8_t cm_path[] = { 0x20, 0x06, 0x24, 0x01 }; /* path to CM */
+    int count_type = (cip_service_code == 0x54 ? BB_U8 : BB_U16);
 
     /*
 
@@ -382,14 +552,12 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
         uint8_t secs_per_tick;          seconds per tick
         uint8_t timeout_ticks;          timeout = src_secs_per_tick * src_timeout_ticks
 
-        uint16_t uc_cmd_length;         length of embedded packet, in bytes
-
         ...CIP read/write request, embedded packet...
 
-        ...IOI path to target device, connection IOI...
+        uint8_t[]                       IOI path to target device, connection IOI...
     */
 
-    pdebug(DEBUG_INFO,"Starting.");
+    pdebug(DEBUG_INFO,"Starting. ip_service_code=%x count_type=%d", cip_service_code, count_type);
 
     /* abort if the wrapped call was not good. */
     if(prev_rc != PLCTAG_STATUS_OK) {
@@ -397,18 +565,14 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
         return prev_rc;
     }
 
-    /* save this for later. */
-    cip_command_length = bytebuf_get_size(buf);
-
     /* two calls, first gets size, second writes data. */
     for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
         rc = bytebuf_marshal(i == 0 ? NULL : buf ,
-                             BB_U8, AB_CIP_CMD_UNCONNECTED_SEND,
-                             BB_U8, (uint8_t)((sizeof(mr_path)/sizeof(mr_path[0])) / 2), /*length of path in 16-bit words*/
-                             BB_BYTES, mr_path, (sizeof(mr_path)/sizeof(mr_path[0])),
+                             BB_U8, cip_service_code,
+                             BB_U8, (uint8_t)((sizeof(cm_path)/sizeof(cm_path[0])) / 2), /*length of path in 16-bit words*/
+                             BB_BYTES, cm_path, (sizeof(cm_path)/sizeof(cm_path[0])),
                              BB_U8, (uint8_t)AB_CIP_SECS_PER_TICK,
-                             BB_U8, (uint8_t)AB_CIP_TIMEOUT_TICKS,
-                             BB_U16, (uint16_t)cip_command_length
+                             BB_U8, (uint8_t)AB_CIP_TIMEOUT_TICKS
                              );
         if(i == 0 && rc > 0) {
             /* make space at the beginning of the buffer. */
@@ -461,7 +625,7 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
     }
 
     /* encode the path at the end. */
-    rc = cip_encode_path(buf, ioi_path);
+    rc = cip_encode_path(buf, ioi_path, count_type);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to add PLC IOI path to packet!");
         return rc;
@@ -877,7 +1041,7 @@ int receive_eip_packet(sock_p sock, bytebuf_p buf)
 
 
 
-int cip_encode_path(bytebuf_p buf, const char *ioi_path)
+int cip_encode_path(bytebuf_p buf, const char *ioi_path, bytebuf_arg_type count_type)
 {
     int ioi_size=0;
     int ioi_length_index = 0;
@@ -903,7 +1067,7 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
 
     /* get the index of the IOI length. */
     ioi_length_index = bytebuf_get_cursor(buf);
-    rc = bytebuf_marshal(buf, BB_U16, 0); /* place holder */
+    rc = bytebuf_marshal(buf, count_type, 0); /* place holder */
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to inject place hodler for IOI length!");
         mem_free(links);
@@ -939,7 +1103,7 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
 
     /* pad out the length */
     if(ioi_size & 0x01) {
-        rc = bytebuf_marshal(buf, BB_U8, 0); /* place holder */
+        rc = bytebuf_marshal(buf, BB_U8, 0); /* padding value */
         if(rc < PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to marshal padding byte!");
             return rc;
@@ -956,7 +1120,7 @@ int cip_encode_path(bytebuf_p buf, const char *ioi_path)
     }
 
     /* set the length.   NOTE: in 16-bit words! */
-    rc = bytebuf_marshal(buf, BB_U16, (uint8_t)(ioi_size/2));
+    rc = bytebuf_marshal(buf, count_type, (uint8_t)(ioi_size/2));
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Bad IOI path format to PLC!");
         return rc;
