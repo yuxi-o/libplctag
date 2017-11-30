@@ -91,7 +91,7 @@ extern char *str_dup(const char *str);
 extern int str_to_int(const char *str, int *val);
 extern int str_to_float(const char *str, float *val);
 extern char **str_split(const char *str, const char *sep);
-#define str_concat(s1, ...) str_concat_impl(COUNT_NARG(__VA_ARGS__), __VA_ARGS__)
+#define str_concat(s1, ...) str_concat_impl(COUNT_NARG(__VA_ARGS__)+1, s1, __VA_ARGS__)
 extern char *str_concat_impl(int num_args, ...);
 
 /* mutex functions/defs */
