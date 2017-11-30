@@ -175,16 +175,31 @@ int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t optio
 }
 
 
-int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t connection_serial_num, uint16_t conn_params)
+int marshal_forward_open_request(bytebuf_p buf, const char *plc_path, uint32_t connection_id, uint16_t connection_serial_num, uint16_t conn_params)
 {
     int rc = PLCTAG_STATUS_OK;
     int first_pos = 0;
     int last_pos = 0;
-    //~ uint8_t msg_router_path[] = {0x20, 0x02, 0x24, 0x01};
+    uint8_t cm_path[] = {0x20, 0x06, 0x24, 0x01}; /* path to CM */
+    const char *mr_path = ",32,2,36,1";
+    char *ioi_path = NULL;
 
     pdebug(DEBUG_INFO,"Starting.");
 
     /*
+
+      We use part of the CM header.  In AB's infinite wisdom they do not use
+      exactly the same format for this (no payload size) as for other CIP
+      commands.
+
+    uint8_t cm_service_code;        0x54 Forward Open
+    uint8_t cm_req_path_size;       ALWAYS 2, size in words of path, next field
+    uint8_t cm_req_path[4];         ALWAYS 0x20,0x06,0x24,0x01 for CM, instance 1
+
+      Unconnected send
+    uint8_t secs_per_tick;          seconds per tick
+    uint8_t timeout_ticks;          timeout = src_secs_per_tick * src_timeout_ticks
+
      Forward Open Params
     uint32_t orig_to_targ_conn_id;   0, returned by target in reply.
     uint32_t targ_to_orig_conn_id;   what is _our_ ID for this connection, use ab_connection ptr as id ?
@@ -198,12 +213,10 @@ int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t
     uint32_t targ_to_orig_rpi;       target to us RPI, in microseconds
     uint16_t targ_to_orig_conn_params;  some sort of identifier of what kind of PLC the target is ???
     uint8_t transport_class;         ALWAYS 0xA3, server transport, class 3, application trigger
-    */
-    /*
+
     uint8_t path_size;               size of connection path in 16-bit words
-                                     * connection path from MSG instruction.
-                                     *
-                                     * EG LGX with 1756-ENBT and CPU in slot 0 would be:
+    uint8_t path[];                  * connection path f
+                                     * Example: LGX with 1756-ENBT and CPU in slot 0 would be:
                                      * 0x01 - backplane port of 1756-ENBT
                                      * 0x00 - slot 0 for CPU
                                      * 0x20 - class
@@ -214,7 +227,19 @@ int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t
 
     first_pos = bytebuf_get_cursor(buf);
 
+    /* make the combined IOI path to the MR */
+    ioi_path = str_concat(plc_path, mr_path);
+    if(!ioi_path) {
+        pdebug(DEBUG_WARN,"Unable to contatenate paths for IOI path!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
     rc = bytebuf_marshal(buf,
+                        BB_U8, AB_CIP_CMD_FORWARD_OPEN,
+                        BB_U8, (uint8_t)((sizeof(cm_path)/sizeof(cm_path[0])) / 2), /*length of path in 16-bit words*/
+                        BB_BYTES, cm_path, (sizeof(cm_path)/sizeof(cm_path[0])),
+                        BB_U8, (uint8_t)AB_CIP_SECS_PER_TICK,
+                        BB_U8, (uint8_t)AB_CIP_TIMEOUT_TICKS,
                         BB_U32, 0,                           /* MAGIC, zero for the target's connection ID.  This will be returned. */
                         BB_U32, connection_id,               /* Our connection ID for this connection. */
                         BB_U16, connection_serial_num,      /* our connection serial number? */
@@ -230,10 +255,22 @@ int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t
                         BB_U16, conn_params,                  /* defines some things about the connection.   Lower 9 bits are max payload size? */
                         BB_U8, AB_CIP_TRANSPORT_CLASS_T3     /* server transport, class 3 (TCP, explicit messaging), application trigger. */
                         );
+
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to marshal forward open request!");
+        mem_free(ioi_path);
         return rc;
     }
+
+    /* encode the path at the end. */
+    rc = cip_encode_path(buf, ioi_path, BB_U8);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to add PLC IOI path to packet!");
+        mem_free(ioi_path);
+        return rc;
+    }
+
+    /* we do not need the ioi_path anymore. */
 
     last_pos = bytebuf_get_cursor(buf);
 
@@ -260,7 +297,7 @@ int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t
 
 
 
-int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, uint32_t *ot_connection_id)
+int unmarshal_forward_open_response(bytebuf_p buf, uint8_t *cip_status, uint16_t *cip_extended_status, uint32_t *to_connection_id, uint32_t *ot_connection_id)
 {
     int rc = PLCTAG_STATUS_OK;
     uint16_t conn_serial_number = 0;
@@ -270,9 +307,19 @@ int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, u
     uint32_t targ_to_orig_api = 0;
     uint8_t app_data_size = 0;
     uint8_t reserved = 0;
+    uint8_t reply_service = 0;
+    uint8_t dummy_byte = 0;
+    uint8_t status_words = 0;
 
     /*
-     Forward Open response
+        CM reply header
+    uint8_t reply_service;      Shows CMD | OK for OK.
+    uint8_t reserved;           0x00 in reply
+    uint8_t status;             0x00 for success, if not 0, then error status words hold
+    uint8_t num_status_words;   number of 16-bit words in status, if status != 0.
+    [uint16_t ...]              extra status words, usually the first one is important.
+
+        Forward Open response
     uint32_t orig_to_targ_conn_id;   target's connection ID for us, save this.
     uint32_t targ_to_orig_conn_id;   our connection ID back for reference
     uint16_t conn_serial_number;     our connection serial number from request
@@ -285,16 +332,49 @@ int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, u
     */
 
     rc = bytebuf_unmarshal(buf,
-                           BB_U32, to_connection_id,
-                           BB_U32, ot_connection_id,
-                           BB_U16, &conn_serial_number,
-                           BB_U16, &orig_vendor_id,
-                           BB_U32, &orig_serial_number,
-                           BB_U32, &orig_to_targ_api,
-                           BB_U32, &targ_to_orig_api,
-                           BB_U8,  &app_data_size,
-                           BB_U8,  &reserved
+                            BB_U8, &reply_service,
+                            BB_U8, &dummy_byte,
+                            BB_U8, cip_status,
+                            BB_U8, &status_words
                            );
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to unmarshal forward open CM response!");
+        return rc;
+    }
+
+    /* check the status. */
+    if(*cip_status != AB_CIP_STATUS_OK) {
+        /* get the extended status */
+        rc = bytebuf_unmarshal(buf, BB_U16, cip_extended_status);
+        if(rc > 0) {
+            rc = PLCTAG_STATUS_OK;
+        }
+
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to get reply extended status!");
+            return rc;
+        }
+
+        pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(*cip_status, *cip_extended_status, 1), decode_cip_error(*cip_status, *cip_extended_status, 0));
+
+       /* abort processing. */
+        return PLCTAG_ERR_REMOTE_ERR;
+    } else {
+        *cip_extended_status = 0;
+    }
+
+    rc = bytebuf_unmarshal(buf,
+                            BB_U32, to_connection_id,
+                            BB_U32, ot_connection_id,
+                            BB_U16, &conn_serial_number,
+                            BB_U16, &orig_vendor_id,
+                            BB_U32, &orig_serial_number,
+                            BB_U32, &orig_to_targ_api,
+                            BB_U32, &targ_to_orig_api,
+                            BB_U8,  &app_data_size,
+                            BB_U8,  &reserved
+                           );
+
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to unmarshal forward open response!");
         return rc;
@@ -308,7 +388,7 @@ int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, u
 int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
 {
     /* packet format is as follows:
-    uint16_t packet_size        packet size in bytes
+       CIP Tag Info command
     uint8_t request_service    0x55
     uint8_t request_path_size  3 - 6 bytes
     uint8_t   0x20    get class
@@ -325,7 +405,6 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     */
 
     int rc = PLCTAG_STATUS_OK;
-    uint16_t packet_size = 0;
     int packet_size_index = 0;
     uint8_t req_path[] = {0x20, 0x6B, 0x25, 0x00};
     int first_pos = bytebuf_get_cursor(buf);
@@ -334,7 +413,6 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     packet_size_index = bytebuf_get_cursor(buf);
 
     rc = bytebuf_marshal(buf,
-                        BB_U16, packet_size,        /* placeholder for now */
                         BB_U8, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST, /* request service */
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 2)/2),  /* should be 3 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
@@ -352,19 +430,19 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
 
     last_pos = bytebuf_get_cursor(buf);
 
-    packet_size = last_pos - packet_size_index - 2; /* remove two for the packet size itself */
+    //~ packet_size = last_pos - packet_size_index - 2; /* remove two for the packet size itself */
 
-    rc = bytebuf_set_cursor(buf, packet_size_index);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to seek cursor to packet size field!");
-        return rc;
-    }
+    //~ rc = bytebuf_set_cursor(buf, packet_size_index);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ pdebug(DEBUG_WARN,"Unable to seek cursor to packet size field!");
+        //~ return rc;
+    //~ }
 
-    rc = bytebuf_marshal(buf, BB_U16, packet_size);
-    if(rc < 0) {
-        pdebug(DEBUG_WARN,"Unable to marshal packet size field!");
-        return rc;
-    }
+    //~ rc = bytebuf_marshal(buf, BB_U16, packet_size);
+    //~ if(rc < 0) {
+        //~ pdebug(DEBUG_WARN,"Unable to marshal packet size field!");
+        //~ return rc;
+    //~ }
 
     rc = bytebuf_set_cursor(buf, first_pos);
     if(rc != PLCTAG_STATUS_OK) {
@@ -398,7 +476,6 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
 
     /*
       packet has the following format:
-    u16 - packet length
     u8 - CIP read command
     u8[] - tag name, encoded
     u16 - element count
@@ -409,7 +486,7 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
     command_size_index = bytebuf_get_cursor(buf);
 
     /* inject the size placeholder and read command byte */
-    rc = bytebuf_marshal(buf, BB_U16, command_size, BB_U8, AB_CIP_READ_FRAG);
+    rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ_FRAG);
     if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set CIP command to read in buffer!");
         return rc;
@@ -533,11 +610,11 @@ int unmarshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data)
 
 
 
-int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t cip_service_code, const char *ioi_path)
+int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
 {
     int rc = PLCTAG_STATUS_OK;
     uint8_t cm_path[] = { 0x20, 0x06, 0x24, 0x01 }; /* path to CM */
-    int count_type = (cip_service_code == 0x54 ? BB_U8 : BB_U16);
+    uint16_t payload_size = 0;
 
     /*
 
@@ -546,18 +623,23 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t cip_service_c
               CM Service Request - Connection Manager
         uint8_t cm_service_code;         0x52 Unconnected Send
         uint8_t cm_req_path_size;        2, size in words of path, next field
-        uint8_t cm_req_path[4];          0x20,0x06,0x24,0x01 for CM, instance 1
+        uint8_t cm_req_path[4];          0x20, 0x06, 0x24, 0x01 for CM, instance 1
 
               Unconnected send
         uint8_t secs_per_tick;          seconds per tick
         uint8_t timeout_ticks;          timeout = src_secs_per_tick * src_timeout_ticks
+        uint16_t payload_size;          Size of payload in bytes.
 
         ...CIP read/write request, embedded packet...
 
-        uint8_t[]                       IOI path to target device, connection IOI...
+        uint16_t path_size;             in 16-bit chunks.
+        uint8_t[]                       IOI path to target device, connection IOI... zero padded if odd length.
     */
 
-    pdebug(DEBUG_INFO,"Starting. ip_service_code=%x count_type=%d", cip_service_code, count_type);
+    pdebug(DEBUG_INFO,"Starting.");
+
+    /* how big is the payload? */
+    payload_size = bytebuf_get_size(buf);
 
     /* abort if the wrapped call was not good. */
     if(prev_rc != PLCTAG_STATUS_OK) {
@@ -568,11 +650,12 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t cip_service_c
     /* two calls, first gets size, second writes data. */
     for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
         rc = bytebuf_marshal(i == 0 ? NULL : buf ,
-                             BB_U8, cip_service_code,
+                             BB_U8, AB_CIP_CMD_UNCONNECTED_SEND,
                              BB_U8, (uint8_t)((sizeof(cm_path)/sizeof(cm_path[0])) / 2), /*length of path in 16-bit words*/
                              BB_BYTES, cm_path, (sizeof(cm_path)/sizeof(cm_path[0])),
                              BB_U8, (uint8_t)AB_CIP_SECS_PER_TICK,
-                             BB_U8, (uint8_t)AB_CIP_TIMEOUT_TICKS
+                             BB_U8, (uint8_t)AB_CIP_TIMEOUT_TICKS,
+                             BB_U16, payload_size
                              );
         if(i == 0 && rc > 0) {
             /* make space at the beginning of the buffer. */
@@ -587,28 +670,7 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t cip_service_c
         }
     }
 
-    if(rc > 0) {
-        int last_pos = bytebuf_get_cursor(buf);
-
-        rc = bytebuf_set_cursor(buf, 0);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to seek to start of data!");
-            return rc;
-        }
-
-        pdebug(DEBUG_DETAIL,"Created new packet data:");
-        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
-
-        rc = bytebuf_set_cursor(buf, last_pos);
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
-            return rc;
-        }
-
-        rc = PLCTAG_STATUS_OK;
-    }
-
-    if(rc != PLCTAG_STATUS_OK) {
+    if(rc < PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to marshal header!");
         return rc;
     }
@@ -625,7 +687,7 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t cip_service_c
     }
 
     /* encode the path at the end. */
-    rc = cip_encode_path(buf, ioi_path, count_type);
+    rc = cip_encode_path(buf, ioi_path, BB_U16);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to add PLC IOI path to packet!");
         return rc;

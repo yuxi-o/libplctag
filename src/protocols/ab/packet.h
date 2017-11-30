@@ -154,8 +154,8 @@ extern int unmarshal_eip_header(bytebuf_p buf, uint16_t *command, uint16_t *leng
 
 extern int marshal_register_session(bytebuf_p buf, uint16_t eip_version, uint16_t option_flags);
 
-extern int marshal_forward_open_request(bytebuf_p buf, uint32_t connection_id, uint16_t connection_serial_num, uint16_t conn_params);
-extern int unmarshal_forward_open_response(bytebuf_p buf, uint32_t *to_connection_id, uint32_t *ot_connection_id);
+extern int marshal_forward_open_request(bytebuf_p buf, const char *plc_path, uint32_t connection_id, uint16_t connection_serial_num, uint16_t conn_params);
+extern int unmarshal_forward_open_response(bytebuf_p buf, uint8_t *cip_status, uint16_t *cip_extended_status, uint32_t *to_connection_id, uint32_t *ot_connection_id);
 
 extern int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance);
 
@@ -164,7 +164,7 @@ extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf);
 
 extern int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
 
-extern int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t service_code, const char *ioi_path);
+extern int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path);
 extern int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status);
 
 extern int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf);

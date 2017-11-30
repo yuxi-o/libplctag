@@ -99,7 +99,7 @@ static logix_plc_p create_plc(const char *path);
 static void plc_destroy(void *plc_arg, int arg_count, void **args);
 static int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
 
-static int perform_unconnected_request(logix_plc_p plc, logix_request_p request, uint8_t cip_request_service, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
+static int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
 static int process_request(logix_plc_p plc);
 static int process_read_request(logix_plc_p plc, logix_request_p request);
 static int process_write_request(logix_plc_p plc, logix_request_p request);
@@ -789,7 +789,7 @@ int process_request(logix_plc_p plc)
  * Wrap it, send it and wait for the response.  Once the response comes back,
  * then unwrap it.
  */
-int perform_unconnected_request(logix_plc_p plc, logix_request_p request, uint8_t cip_request_service, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
+int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
 {
     int rc = PLCTAG_STATUS_OK;
     uint16_t eip_command = 0;
@@ -800,7 +800,7 @@ int perform_unconnected_request(logix_plc_p plc, logix_request_p request, uint8_
 
     pdebug(DEBUG_INFO,"Starting.");
 
-    rc = marshal_eip_header(marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(rc, plc->data, cip_request_service, ioi_path),
+    rc = marshal_eip_header(marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(rc, plc->data, ioi_path),
                                                         plc->data),
                             plc->data,  AB_EIP_UNCONNECTED_SEND, plc->session_handle, ++plc->session_context);
     if(rc != PLCTAG_STATUS_OK) {
@@ -947,7 +947,7 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
             return rc;
         }
 
-        rc = perform_unconnected_request(plc, request, AB_CIP_CMD_UNCONNECTED_SEND, plc->path, &eip_status, &cip_status, &cip_extended_status);
+        rc = perform_unconnected_request(plc, request, plc->path, &eip_status, &cip_status, &cip_extended_status);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to send/receive CIP read command!");
             return rc;
@@ -1150,7 +1150,7 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
             return rc;
         }
 
-        rc = perform_unconnected_request(plc, request, AB_CIP_CMD_UNCONNECTED_SEND, plc->path, &eip_status, &cip_status, &cip_status_extended);
+        rc = perform_unconnected_request(plc, request, plc->path, &eip_status, &cip_status, &cip_status_extended);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to send/receive CIP get tag info command!");
             return rc;
@@ -1407,25 +1407,15 @@ int register_plc(logix_plc_p plc)
 int connect_plc(logix_plc_p plc)
 {
     int rc = PLCTAG_STATUS_OK;
-    const char *mr_path = ",32,2,36,1";  /* 0x20, 0x02, 0x24, 0x01 - path to Message Router */
-    char *ioi_path = NULL;
     uint16_t eip_command = 0;
     uint16_t eip_payload_length = 0;
     uint32_t eip_status = 0;
     uint32_t session_handle = 0;
     uint64_t session_context = 0;
-    uint8_t cip_reply_service = 0;
     uint8_t cip_status = 0;
     uint16_t cip_extended_status = 0;
 
-    ioi_path = str_concat(plc->path, mr_path);
-    if(!ioi_path) {
-        pdebug(DEBUG_WARN,"Unable to create concatenated path string!");
-        return PLCTAG_ERR_NO_MEM;
-    }
-
-
-    pdebug(DEBUG_DETAIL,"plc->path = %s, mr_path = %s, ioi_path = %s", plc->path, mr_path, ioi_path);
+    pdebug(DEBUG_INFO, "Starting.");
 
     /* set the cursor back to zero so that we can start writing the data to the socket. */
     rc = bytebuf_reset(plc->data);
@@ -1434,7 +1424,7 @@ int connect_plc(logix_plc_p plc)
         return rc;
     }
 
-    rc = marshal_forward_open_request(plc->data, ++plc->orig_connection_id, ++plc->connection_serial_num, AB_CIP_LGX_PARAM);
+    rc = marshal_forward_open_request(plc->data, plc->path, ++plc->orig_connection_id, ++plc->connection_serial_num, AB_CIP_LGX_PARAM);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to marshal CIP forward open request!");
         return rc;
@@ -1442,16 +1432,13 @@ int connect_plc(logix_plc_p plc)
 
     pdebug(DEBUG_DETAIL,"Sending forward open with orig_connection_id = %x and connection_serial_num = %x", plc->orig_connection_id, plc->connection_serial_num);
 
-    rc = marshal_eip_header(marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(rc, plc->data, AB_CIP_CMD_FORWARD_OPEN, ioi_path),
-                                                        plc->data),
+    rc = marshal_eip_header(marshal_cip_cfp_unconnected(rc, plc->data),
                             plc->data,  AB_EIP_UNCONNECTED_SEND, plc->session_handle, ++plc->session_context);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to EIP request!");
-        mem_free(ioi_path);
         return rc;
     }
 
-    mem_free(ioi_path);
 
     /* set the cursor back to zero so that we can start writing the data to the socket. */
     rc = bytebuf_set_cursor(plc->data, 0);
@@ -1503,23 +1490,22 @@ int connect_plc(logix_plc_p plc)
     }
 
     /* process the response */
-    rc = unmarshal_cip_cm_unconnected(unmarshal_cip_cfp_unconnected(unmarshal_eip_header(plc->data, &eip_command, &eip_payload_length, &session_handle, &eip_status, &session_context),
-                                                                    plc->data),
-                                      plc->data, &cip_reply_service, &cip_status, &cip_extended_status);
-    if(rc != PLCTAG_STATUS_OK) {
+    rc = unmarshal_cip_cfp_unconnected(unmarshal_eip_header(plc->data, &eip_command, &eip_payload_length, &session_handle, &eip_status, &session_context),
+                                                                    plc->data);
+     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
+        return rc;
+    }
+
+    rc = unmarshal_forward_open_response(plc->data,&cip_status, &cip_extended_status, &plc->targ_connection_id, &plc->orig_connection_id);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error unmarshalling forward open response!");
         return rc;
     }
 
     if(cip_status != AB_CIP_OK && cip_status != AB_CIP_STATUS_FRAG) {
         pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(cip_status, cip_extended_status, 0), decode_cip_error(cip_status, cip_extended_status, 1));
         return PLCTAG_ERR_REMOTE_ERR;
-    }
-
-    rc = unmarshal_forward_open_response(plc->data, &plc->targ_connection_id, &plc->orig_connection_id);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN, "Error unmarshalling forward open response!");
-        return rc;
     }
 
     pdebug(DEBUG_DETAIL,"Got targ_connection_id = %x orig_connection_id = %x", plc->targ_connection_id, plc->orig_connection_id);
