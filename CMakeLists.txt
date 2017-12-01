@@ -191,21 +191,21 @@ endforeach(tst)
 
 # add the examples
 if (UNIX)
-    set ( example_PROGRAMS async
-                           data_dumper
+    set ( example_PROGRAMS #~async
+                           #~ data_dumper
                            list_tags
-                           multithread
-                           multithread_cached_read
-                           multithread_plc5
-                           multithread_plc5_dhp
-                           plc5
+                           #~ multithread
+                           #~ multithread_cached_read
+                           #~ multithread_plc5
+                           #~ multithread_plc5_dhp
+                           #~ plc5
                            simple
-                           simple_dual
-                           slc500
-                           string
+                           #~ simple_dual
+                           #~ slc500
+                           #~ string
                            test_special
-                           toggle_bool
-                           write_string
+                           #~ toggle_bool
+                           #~ write_string
                            tag_rw )
 
     set ( example_PROG_UTIL utils_posix.c)
