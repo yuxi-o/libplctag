@@ -165,10 +165,14 @@ extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf);
 extern int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
 
 extern int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path);
-extern int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status);
+extern int unmarshal_cip_response_header(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status);
 
 extern int marshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf);
 extern int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf);
+
+extern int marshal_cip_cfp_connected(int prev_rc, bytebuf_p buf, uint32_t target_conn_id, uint16_t conn_seq_num);
+extern int unmarshal_cip_cfp_connected(int prev_rc, bytebuf_p buf, uint32_t orig_conn_id, uint16_t conn_seq_num);
+
 
 extern int send_eip_packet(sock_p sock, bytebuf_p payload);
 extern int receive_eip_packet(sock_p sock, bytebuf_p buf);

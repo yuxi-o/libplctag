@@ -703,7 +703,7 @@ int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path)
 
 
 
-int unmarshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status)
+int unmarshal_cip_response_header(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status)
 {
     int rc = PLCTAG_STATUS_OK;
     uint8_t dummy_byte = 0;
@@ -917,6 +917,180 @@ int unmarshal_cip_cfp_unconnected(int prev_rc, bytebuf_p buf)
 
     return PLCTAG_STATUS_OK;
 }
+
+
+
+
+int marshal_cip_cfp_connected(int prev_rc, bytebuf_p buf, uint32_t target_conn_id, uint16_t conn_seq_num)
+{
+    int rc = PLCTAG_STATUS_OK;
+    int payload_length = 0;
+
+    /*
+        CPF header looks like this:
+
+              Interface Handle etc.
+        uint32_t interface_handle;      ALWAYS 0
+        uint16_t router_timeout;        Usually set to a few seconds.
+
+              Common Packet Format - CPF Connected
+        uint16_t cpf_item_count;        ALWAYS 2
+        uint16_t cpf_cai_item_type;     ALWAYS 0x00A1 Connected Address Item
+        uint16_t cpf_cai_item_length;   ALWAYS 2 ?
+        uint32_t cpf_targ_conn_id;      the connection id from Forward Open
+        uint16_t cpf_cdi_item_type;     ALWAYS 0x00B1, Connected Data Item type
+        uint16_t cpf_cdi_item_length;   length in bytes of the rest of the packet
+
+          Connection sequence number
+        uint16_t cpf_conn_seq_num;      connection sequence ID, inc for each message
+
+        ... payload ...
+    */
+
+    pdebug(DEBUG_INFO,"Starting.");
+
+    /* punt if wrapped call failed. */
+    if(prev_rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Aborting due to previous bad return code.");
+        return prev_rc;
+    }
+
+    /* get the payload size before we change the buffer. */
+    payload_length = bytebuf_get_size(buf);
+
+   /* two calls, first gets size, second writes data. */
+    for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
+        rc = bytebuf_marshal(i == 0 ? NULL : buf ,
+                             BB_U32, 0,     /* interface handle, apparently zero */
+                             BB_U16, (uint16_t)AB_DEFAULT_ROUTER_TIMEOUT_SECS,
+                             BB_U16, 2,     /* item count */
+                             BB_U16, (uint16_t)AB_CIP_ITEM_CAI,
+                             BB_U16, (uint16_t)4,   /* Connected address length is four bytes */
+                             BB_U32, target_conn_id, /* target connection ID from Forward Open */
+                             BB_U16, (uint16_t)AB_CIP_ITEM_CDI,
+                             BB_U16, (uint16_t)payload_length,
+                             BB_U16, conn_seq_num
+                             );
+        if(i == 0 && rc > 0) {
+            /* make space at the beginning of the buffer. */
+            pdebug(DEBUG_DETAIL,"Making %d bytes of space at the beginning for the header.", rc);
+            rc = bytebuf_set_cursor(buf, - rc); /* rc contains the header size. */
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Error setting buffer cursor!");
+                return rc;
+            }
+
+            rc = PLCTAG_STATUS_OK;
+        }
+    }
+
+    if(rc > 0) {
+        int last_pos = bytebuf_get_cursor(buf);
+
+        rc = bytebuf_set_cursor(buf, 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of data!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Created new packet data:");
+        pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), bytebuf_get_size(buf));
+
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+
+        rc = PLCTAG_STATUS_OK;
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal header!");
+        return rc;
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return rc;
+}
+
+
+int unmarshal_cip_cfp_connected(int prev_rc, bytebuf_p buf, uint32_t orig_conn_id, uint16_t conn_seq_num)
+{
+    int rc = PLCTAG_STATUS_OK;
+    uint32_t interface_handle;
+    uint16_t router_timeout;
+    uint16_t item_count;
+    uint16_t item_cai;
+    uint16_t item_cai_length;
+    uint32_t item_conn_id;
+    uint16_t item_cdi;
+    uint16_t payload_length;
+    uint16_t packet_conn_seq_num;
+
+    /* The CPF header on a reply looks like this:
+        Interface Handle etc.
+    uint32_t interface_handle;
+    uint16_t router_timeout;
+
+        Common Packet Format - CPF Connected
+    uint16_t cpf_item_count;        ALWAYS 2
+    uint16_t cpf_cai_item_type;     ALWAYS 0x00A1 Connected Address Item
+    uint16_t cpf_cai_item_length;   ALWAYS 2 ?
+    uint32_t cpf_orig_conn_id;      our connection ID, NOT the target's
+    uint16_t cpf_cdi_item_type;     ALWAYS 0x00B1, Connected Data Item type
+    uint16_t cpf_cdi_item_length;   length in bytes of the rest of the packet
+
+       connection ID from request
+    uint16_t cpf_conn_seq_num;      connection sequence ID, inc for each message
+
+
+
+    ... payload ...
+    */
+
+    pdebug(DEBUG_DETAIL, "Starting.");
+
+    /* abort if the wrapped function failed. */
+    if(prev_rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Aborting because previous call failed.");
+        return prev_rc;
+    }
+
+    rc = bytebuf_unmarshal(buf,
+                     BB_U32, &interface_handle,
+                     BB_U16, &router_timeout,
+                     BB_U16, &item_count,     /* item count, FIXME - should check this! */
+                     BB_U16, &item_cai,
+                     BB_U16, &item_cai_length,
+                     BB_U32, &item_conn_id,
+                     BB_U16, &item_cdi,
+                     BB_U16, &payload_length,
+                     BB_U16, &packet_conn_seq_num
+                     );
+
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal header!");
+        return rc;
+    }
+
+    /* is this the right packet? */
+    if(item_conn_id != orig_conn_id) {
+        pdebug(DEBUG_WARN,"Got unexpected packet from a different connection!");
+        return PLCTAG_ERR_NOT_FOUND;
+    }
+
+    if(packet_conn_seq_num != conn_seq_num) {
+        pdebug(DEBUG_WARN,"Got unexpected packet sequence number!");
+        return PLCTAG_ERR_NOT_FOUND;
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return PLCTAG_STATUS_OK;
+}
+
 
 
 

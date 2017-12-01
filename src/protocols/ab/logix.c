@@ -100,6 +100,7 @@ static void plc_destroy(void *plc_arg, int arg_count, void **args);
 static int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
 
 static int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
+static int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
 static int process_request(logix_plc_p plc);
 static int process_read_request(logix_plc_p plc, logix_request_p request);
 static int process_write_request(logix_plc_p plc, logix_request_p request);
@@ -804,7 +805,7 @@ int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const 
                                                         plc->data),
                             plc->data,  AB_EIP_UNCONNECTED_SEND, plc->session_handle, ++plc->session_context);
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to marshal Tag read service request!");
+        pdebug(DEBUG_WARN,"Unable to marshal request!");
         return rc;
     }
 
@@ -830,7 +831,7 @@ int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const 
     }
 
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error sending tag info request!");
+        pdebug(DEBUG_WARN,"Error sending request!");
         return rc;
     }
 
@@ -853,14 +854,99 @@ int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const 
     }
 
     if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Error receiving tag info response!");
+        pdebug(DEBUG_WARN,"Error receiving response!");
         return rc;
     }
 
     /* process the response */
-    rc = unmarshal_cip_cm_unconnected(unmarshal_cip_cfp_unconnected(unmarshal_eip_header(plc->data, &eip_command, &eip_payload_length, &session_handle, eip_status, &session_context),
+    rc = unmarshal_cip_response_header(unmarshal_cip_cfp_unconnected(unmarshal_eip_header(plc->data, &eip_command, &eip_payload_length, &session_handle, eip_status, &session_context),
                                                                     plc->data),
                                       plc->data, &cip_reply_service, cip_status, cip_extended_status);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
+        return rc;
+    }
+
+    if(*cip_status != AB_CIP_OK && *cip_status != AB_CIP_STATUS_FRAG) {
+        pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(*cip_status, *cip_extended_status, 0), decode_cip_error(*cip_status, *cip_extended_status, 1));
+        return PLCTAG_ERR_REMOTE_ERR;
+    }
+
+    return rc;
+}
+
+
+int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
+{
+    int rc = PLCTAG_STATUS_OK;
+    uint16_t eip_command = 0;
+    uint16_t eip_payload_length = 0;
+    uint32_t session_handle = 0;
+    uint64_t session_context = 0;
+    uint8_t cip_reply_service = 0;
+
+    pdebug(DEBUG_INFO,"Starting.");
+
+    rc = marshal_eip_header(marshal_cip_cfp_connected(rc, plc->data, plc->targ_connection_id, ++plc->connection_serial_num),
+                            plc->data,  AB_EIP_CONNECTED_SEND, plc->session_handle, ++plc->session_context);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal request!");
+        return rc;
+    }
+
+    /* set the cursor back to zero so that we can start writing the data to the socket. */
+    rc = bytebuf_set_cursor(plc->data, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error inserting setting bytebuffer cursor!");
+        return rc;
+    }
+
+    do {
+        rc = send_eip_packet(plc->sock, plc->data);
+        if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+            /* FIXME - should we kill the plc at this point? */
+            pdebug(DEBUG_WARN,"Unable to send packet!");
+            return rc;
+        }
+    } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
+
+    if(rc_thread_check_abort() || request_get_abort(request)) {
+        pdebug(DEBUG_WARN,"Request aborted!");
+        rc = PLCTAG_ERR_ABORT;
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error sending request!");
+        return rc;
+    }
+
+    /* now get the reply */
+
+    /* reset the buffer so that we can read in data. */
+    bytebuf_reset(plc->data);
+
+    do {
+        rc = receive_eip_packet(plc->sock, plc->data);
+        if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+            pdebug(DEBUG_WARN,"Unable to read in response packet!");
+            return rc;
+        }
+    } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
+
+    if(rc_thread_check_abort() || request_get_abort(request)) {
+        pdebug(DEBUG_WARN,"Aborting request!");
+        rc = PLCTAG_ERR_ABORT;
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error receiving response!");
+        return rc;
+    }
+
+    /* process the response */
+    rc = unmarshal_cip_response_header(unmarshal_cip_cfp_connected(unmarshal_eip_header(plc->data, &eip_command, &eip_payload_length, &session_handle, eip_status, &session_context),
+                                                                    plc->data, plc->orig_connection_id, plc->connection_serial_num),
+                                       plc->data, &cip_reply_service, cip_status, cip_extended_status);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
         return rc;
@@ -947,7 +1033,7 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
             return rc;
         }
 
-        rc = perform_unconnected_request(plc, request, plc->path, &eip_status, &cip_status, &cip_extended_status);
+        rc = perform_connected_request(plc, request, &eip_status, &cip_status, &cip_extended_status);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Unable to send/receive CIP read command!");
             return rc;
@@ -1155,78 +1241,6 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
             pdebug(DEBUG_WARN,"Unable to send/receive CIP get tag info command!");
             return rc;
         }
-
-        //~ rc = marshal_eip_header(marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(marshal_cip_get_tag_info(buf, last_instance_id),
-                                                                                       //~ buf, plc->path),
-                                                            //~ buf),
-                                //~ buf, AB_EIP_UNCONNECTED_SEND, plc->session_handle, ++plc->session_context);
-        //~ if(rc != PLCTAG_STATUS_OK) {
-            //~ pdebug(DEBUG_WARN,"Unable to marshal Tag info service request!");
-            //~ return rc;
-        //~ }
-
-        //~ /* set the cursor back to zero so that we can start writing the data to the socket. */
-        //~ rc = bytebuf_set_cursor(buf, 0);
-        //~ if(rc != PLCTAG_STATUS_OK) {
-            //~ pdebug(DEBUG_WARN,"Error inserting setting bytebuffer cursor!");
-            //~ return rc;
-        //~ }
-
-        //~ do {
-            //~ rc = send_eip_packet(plc->sock, buf);
-            //~ if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
-                //~ /* FIXME - should we kill the plc at this point? */
-                //~ pdebug(DEBUG_WARN,"Unable to send packet!");
-                //~ return rc;
-            //~ }
-        //~ } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
-
-        //~ if(rc_thread_check_abort() || request_get_abort(request)) {
-            //~ pdebug(DEBUG_WARN, "Request aborted.");
-            //~ rc = PLCTAG_ERR_ABORT;
-        //~ }
-
-        //~ if(rc != PLCTAG_STATUS_OK) {
-            //~ pdebug(DEBUG_WARN,"Error sending tag info request!");
-            //~ return rc;
-        //~ }
-
-        //~ /* now get the reply */
-
-        //~ /* reset the buffer so that we can read in data. */
-        //~ bytebuf_reset(buf);
-
-        //~ do {
-            //~ rc = receive_eip_packet(plc->sock, buf);
-            //~ if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
-                //~ pdebug(DEBUG_WARN,"Unable to read in response packet!");
-                //~ return rc;
-            //~ }
-        //~ } while(rc == PLCTAG_STATUS_PENDING && !request_get_abort(request) && !rc_thread_check_abort());
-
-        //~ if(rc_thread_check_abort() || request_get_abort(request)) {
-            //~ pdebug(DEBUG_WARN,"Aborting request!");
-            //~ rc = PLCTAG_ERR_ABORT;
-        //~ }
-
-        //~ if(rc != PLCTAG_STATUS_OK) {
-            //~ pdebug(DEBUG_WARN,"Error receiving tag info response!");
-            //~ return rc;
-        //~ }
-
-        //~ /* process the response */
-        //~ rc = unmarshal_cip_cm_unconnected(unmarshal_cip_cfp_unconnected(unmarshal_eip_header(buf, &eip_command, &eip_payload_length, &session_handle, &eip_status, &session_context),
-                                                                        //~ buf),
-                                          //~ buf, &cip_reply_service, &cip_status, &cip_extended_status);
-        //~ if(rc != PLCTAG_STATUS_OK) {
-            //~ pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
-            //~ return rc;
-        //~ }
-
-        //~ if(cip_status != AB_CIP_OK && cip_status != AB_CIP_STATUS_FRAG) {
-            //~ pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(cip_status, cip_extended_status, 0), decode_cip_error(cip_status, cip_extended_status, 1));
-            //~ return PLCTAG_ERR_REMOTE_ERR;
-        //~ }
 
         /* get the current offset of the start of the data. */
         data_start = bytebuf_get_cursor(plc->data);
