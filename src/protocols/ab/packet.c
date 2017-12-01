@@ -405,12 +405,9 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
     */
 
     int rc = PLCTAG_STATUS_OK;
-    int packet_size_index = 0;
     uint8_t req_path[] = {0x20, 0x6B, 0x25, 0x00};
     int first_pos = bytebuf_get_cursor(buf);
     int last_pos = 0;
-
-    packet_size_index = bytebuf_get_cursor(buf);
 
     rc = bytebuf_marshal(buf,
                         BB_U8, (int8_t)AB_CIP_CMD_GET_INSTANCE_ATTRIB_LIST, /* request service */
@@ -470,9 +467,10 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
 int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset)
 {
     int rc = PLCTAG_STATUS_OK;
+    int first_pos = 0;
     int last_pos = 0;
-    int command_size_index = 0;
-    int command_size = 0;
+    //~ int command_size_index = 0;
+    //~ int command_size = 0;
 
     /*
       packet has the following format:
@@ -483,7 +481,7 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
     */
 
     /* get the current position for later reset of the packet size. */
-    command_size_index = bytebuf_get_cursor(buf);
+    first_pos = bytebuf_get_cursor(buf);
 
     /* inject the size placeholder and read command byte */
     rc = bytebuf_marshal(buf, BB_U8, AB_CIP_READ_FRAG);
@@ -508,22 +506,8 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
 
     last_pos = bytebuf_get_cursor(buf);
 
-    command_size = last_pos - command_size_index - 2; /* 2 bytes for the command size itself which is not counted. */
-
-    rc = bytebuf_set_cursor(buf, command_size_index);
-    if(rc != PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to seek to location of packet size field!");
-        return rc;
-    }
-
-    rc = bytebuf_marshal(buf, BB_U16, command_size);
-    if(rc < PLCTAG_STATUS_OK) {
-        pdebug(DEBUG_WARN,"Unable to set command size!");
-        return rc;
-    }
-
     /* print out the packet */
-    rc = bytebuf_set_cursor(buf, 0);
+    rc = bytebuf_set_cursor(buf, first_pos);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
         return rc;
