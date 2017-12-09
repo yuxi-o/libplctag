@@ -888,7 +888,7 @@ int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t
     pdebug(DEBUG_INFO,"Starting.");
 
     rc = marshal_eip_header(marshal_cip_cfp_connected(rc, plc->data, plc->targ_connection_id, ++plc->connection_serial_num),
-                            plc->data,  AB_EIP_CONNECTED_SEND, plc->session_handle, ++plc->session_context);
+                            plc->data,  AB_EIP_CONNECTED_SEND, plc->session_handle, /*++plc->session_context*/ (uint64_t)0);
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to marshal request!");
         return rc;

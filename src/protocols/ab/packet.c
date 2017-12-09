@@ -956,7 +956,7 @@ int marshal_cip_cfp_connected(int prev_rc, bytebuf_p buf, uint32_t target_conn_i
     }
 
     /* get the payload size before we change the buffer. */
-    payload_length = bytebuf_get_size(buf);
+    payload_length = bytebuf_get_size(buf) + 2; /* add two for the size of the connection sequence number */
 
    /* two calls, first gets size, second writes data. */
     for(int i=0; rc == PLCTAG_STATUS_OK && i < 2; i++) {
