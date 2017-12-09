@@ -160,7 +160,7 @@ extern int unmarshal_forward_open_response(bytebuf_p buf, uint8_t *cip_status, u
 extern int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance);
 
 extern int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset);
-extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf);
+extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf, int *type_info_index, int *type_info_length);
 
 extern int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
 

@@ -271,7 +271,9 @@ int marshal_forward_open_request(bytebuf_p buf, const char *plc_path, uint32_t c
     }
 
     /* we do not need the ioi_path anymore. */
+    mem_free(ioi_path);
 
+    /* save where we are in order to print out the packet. */
     last_pos = bytebuf_get_cursor(buf);
 
     rc = bytebuf_set_cursor(buf, first_pos);
@@ -469,8 +471,6 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
     int rc = PLCTAG_STATUS_OK;
     int first_pos = 0;
     int last_pos = 0;
-    //~ int command_size_index = 0;
-    //~ int command_size = 0;
 
     /*
       packet has the following format:
@@ -526,7 +526,7 @@ int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset
 }
 
 
-int unmarshal_cip_read(int prev_rc, bytebuf_p buf)
+int unmarshal_cip_read(int prev_rc, bytebuf_p buf, int *type_info_index, int *type_info_length)
 {
     int rc = PLCTAG_STATUS_OK;
     uint8_t type_byte;
@@ -535,6 +535,9 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf)
     if(prev_rc != PLCTAG_STATUS_OK) {
         return prev_rc;
     }
+
+    *type_info_index = bytebuf_get_cursor(buf);
+    *type_info_length = 1;
 
     /* eat the type info. */
     rc = bytebuf_unmarshal(buf, BB_U8, &type_byte);
@@ -547,6 +550,7 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf)
     if (type_byte >= AB_CIP_DATA_BIT && type_byte <= AB_CIP_DATA_STRINGI) {
         /* skip the type byte and length byte */
         rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + 1);
+        *type_info_length += 1;
     } else if (type_byte == AB_CIP_DATA_ABREV_STRUCT || type_byte == AB_CIP_DATA_ABREV_ARRAY ||
                type_byte == AB_CIP_DATA_FULL_STRUCT || type_byte == AB_CIP_DATA_FULL_ARRAY) {
         /* this is an aggregate type of some sort, the type info is variable length */
@@ -557,6 +561,8 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf)
             pdebug(DEBUG_WARN,"Unable to get type length byte!");
             return rc;
         }
+
+        *type_info_length += type_length_byte + 1; /* + 1 for the length byte itself */
 
         /* skip past the type data, does the type length include the type byte and length byte? */
         rc = bytebuf_set_cursor(buf, bytebuf_get_cursor(buf) + (int)type_length_byte);

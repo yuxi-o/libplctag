@@ -32,12 +32,21 @@
 #include <util/vector.h>
 #include <util/hashtable.h>
 
+#define TAG_TYPE_BYTE_LENGTH (16)
+#define MAX_SYMBOL_LEN (41)  /* name segments must be 40 or fewer characters. */
 
 struct logix_tag_info_t {
-    uint32_t instance_id;
+    /* elements from the PLC, if we can get them. */
     uint16_t type_info;
+    uint32_t instance_id;
     uint32_t element_length;
     uint32_t array_dims[3];
+
+    /* elements from the tag string or the result of a read. */
+    const char *tag_name;
+    uint32_t elem_count;
+    uint8_t type_bytes[TAG_TYPE_BYTE_LENGTH];
+    int type_byte_length;
 };
 
 typedef struct logix_tag_info_t *logix_tag_info_p;
@@ -99,6 +108,8 @@ static logix_plc_p create_plc(const char *path);
 static void plc_destroy(void *plc_arg, int arg_count, void **args);
 static int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
 
+static logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name);
+
 static int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
 static int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
 static int process_request(logix_plc_p plc);
@@ -133,8 +144,10 @@ int logix_tag_create(tag_p tag)
     char *plc_name = NULL;
     logix_plc_p plc = NULL;
     attr attribs = tag_get_attribs(tag);
+    const char *tag_name = NULL;
     const char *path = NULL;
     bytebuf_p data = NULL;
+    logix_tag_info_p tag_info = NULL;
     int rc = PLCTAG_STATUS_OK;
 
 
@@ -143,6 +156,12 @@ int logix_tag_create(tag_p tag)
     if(!attribs) {
         pdebug(DEBUG_WARN,"Tag has no attributes!");
         return PLCTAG_ERR_NO_DATA;
+    }
+
+    tag_name = attr_get_str(attribs, "tag", NULL);
+    if(!tag_name || !str_length(tag_name)) {
+        pdebug(DEBUG_WARN,"Tag name is missing or empty!");
+        return PLCTAG_ERR_BAD_PARAM;
     }
 
     path = attr_get_str(attribs,"path",NULL);
@@ -186,7 +205,6 @@ int logix_tag_create(tag_p tag)
     pdebug(DEBUG_INFO,"Starting with path %s", path);
 
     plc = resource_get(plc_name);
-
     if(!plc) {
         pdebug(DEBUG_DETAIL,"Might need to create new plc.");
 
@@ -224,6 +242,20 @@ int logix_tag_create(tag_p tag)
     if(rc != PLCTAG_STATUS_OK) {
         pdebug(DEBUG_WARN,"Unable to set implementation data on tag!");
         rc_dec(plc);
+        return rc;
+    }
+
+    /* set up the tag info for the tag. */
+    tag_info = get_tag_info(plc, tag_name);
+    if(!tag_info) {
+        pdebug(DEBUG_WARN,"Unable to create tag-specific info structure!");
+        return PLCTAG_ERR_NO_MEM;
+    }
+
+    /* queue the initial read. */
+    rc = tag_read(plc, tag);
+    if(rc == PLCTAG_STATUS_PENDING) {
+        rc = PLCTAG_STATUS_OK;
     }
 
     pdebug(DEBUG_INFO,"Done.");
@@ -598,6 +630,41 @@ int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info
 }
 
 
+
+logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name)
+{
+    logix_tag_info_p tag_info = NULL;
+    int rc = PLCTAG_STATUS_OK;
+
+    critical_block(plc->mutex) {
+        tag_info = hashtable_get(plc->tag_info, (void *)tag_name, str_length(tag_name));
+        if(!tag_info) {
+            /* make an entry, plus space for the name. */
+            tag_info = mem_alloc(sizeof(struct logix_tag_info_t) + str_length(tag_name) + 1);
+            if(!tag_info) {
+                pdebug(DEBUG_ERROR,"Unable to allocate new tag info struct!");
+                return NULL;
+            }
+
+            /* copy the name */
+            tag_info->tag_name = (const char *)(tag_info + 1);
+            mem_copy((void *)(tag_info->tag_name), (void *)tag_name, str_length(tag_name));
+
+            /* add the instance to the hashtable */
+            rc = hashtable_put(plc->tag_info, (void *)tag_name, str_length(tag_name), tag_info);
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN,"Unable to insert new info struct into tag info table!");
+                mem_free(tag_info);
+                return NULL;
+            }
+        }
+    }
+
+    return tag_info;
+}
+
+
+
 void plc_monitor(int arg_count, void **args)
 {
     logix_plc_p plc;
@@ -969,12 +1036,15 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
     attr attribs = NULL;
     tag_p tag = NULL;
     const char *tag_name = NULL;
+    logix_tag_info_p tag_info = NULL;
     int elem_count = 0;
     bytebuf_p tag_buf = NULL;
     int offset = 0;
     uint32_t eip_status = 0;
     uint8_t cip_status = 0;
     uint16_t cip_extended_status = 0;
+    int type_info_index = 0;
+    int type_info_length = 0;
 
     pdebug(DEBUG_INFO,"Starting.");
 
@@ -1017,7 +1087,27 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    elem_count = attr_get_int(attribs,"elem_count", 1);
+    tag_info = get_tag_info(plc, tag_name);
+    if(!tag_info) {
+        pdebug(DEBUG_WARN,"Unable to get tag info struct!");
+        return PLCTAG_ERR_BAD_DATA;
+    }
+
+    /*
+     * set up the element count.   If it is zero, then get the
+     * real count from the array dimensions.
+     */
+    elem_count = attr_get_int(attribs,"elem_count", 0);
+    if(elem_count == 0) {
+        elem_count = 1;
+
+        for(int i=0; i < (int)((sizeof(tag_info->array_dims)/sizeof(tag_info->array_dims[0]))); i++) {
+            /* skip if it is zero */
+            if(tag_info->array_dims[i] != 0) {
+                elem_count = elem_count * tag_info->array_dims[i];
+            }
+        }
+    }
 
     do {
         /* set the cursor back to zero so that we can start writing the data to the socket. */
@@ -1039,19 +1129,38 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
             return rc;
         }
 
-        //~ rc = marshal_eip_header(marshal_cip_cfp_unconnected(marshal_cip_cm_unconnected(marshal_cip_read(plc->data, tag_name, elem_count, offset),
-                                                                                       //~ plc->data, plc->path),
-                                                            //~ plc->data),
-                                //~ plc->data,  AB_EIP_UNCONNECTED_SEND, plc->session_handle, ++plc->session_context);
-        //~ if(rc != PLCTAG_STATUS_OK) {
-            //~ pdebug(DEBUG_WARN,"Unable to marshal Tag read service request!");
-            //~ return rc;
-        //~ }
-
-        rc = unmarshal_cip_read(rc, plc->data);
+        rc = unmarshal_cip_read(rc, plc->data, &type_info_index, &type_info_length);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN, "Error unmarshalling CIP read header!");
             return rc;
+        }
+
+        /* do we need to copy the type info? */
+        if(tag_info->type_byte_length == 0) {
+            int current_cursor = bytebuf_get_cursor(plc->data);
+
+            if(TAG_TYPE_BYTE_LENGTH < type_info_length) {
+                pdebug(DEBUG_ERROR,"Unable to copy type info because it is too long!  Type info length is %d", type_info_length);
+                return PLCTAG_ERR_TOO_LONG;
+            }
+
+            rc = bytebuf_set_cursor(plc->data, type_info_index);
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN, "Error seeking cursor to type info index!");
+                return rc;
+            }
+
+            pdebug(DEBUG_DETAIL,"Copying %d bytes of type information.", type_info_length);
+
+            mem_copy(tag_info->type_bytes, bytebuf_get_buffer(plc->data), type_info_length);
+            tag_info->type_byte_length = type_info_length;
+
+            /* set the cursor back to where we were. */
+            rc = bytebuf_set_cursor(plc->data, current_cursor);
+            if(rc != PLCTAG_STATUS_OK) {
+                pdebug(DEBUG_WARN, "Error seeking cursor past type info!");
+                return rc;
+            }
         }
 
         /* copy data from response into tag. */
@@ -1091,7 +1200,7 @@ int process_write_request(logix_plc_p plc, logix_request_p request)
 }
 
 
-int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, uint32_t *last_instance_id)
+int process_get_tags_reply_entries(bytebuf_p buf, logix_plc_p plc, uint32_t *last_instance_id)
 {
     int rc = PLCTAG_STATUS_OK;
     int32_t instance_id = 0;
@@ -1099,7 +1208,7 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     uint16_t element_length = 0;
     uint32_t array_dims[3] = {0,};
     uint16_t string_len  = 0;
-    char symbol_name[128] = {0,};
+    char symbol_name[MAX_SYMBOL_LEN] = {0,};
     logix_tag_info_p tag_info = NULL;
 
     pdebug(DEBUG_DETAIL,"Starting.");
@@ -1144,22 +1253,10 @@ int process_get_tags_reply_entries(bytebuf_p buf, hashtable_p tag_info_table, ui
     pdebug(DEBUG_INFO,"Get symbol entry for \"%s\" with instance ID %x and type %x and element length %d and dimensions (%d,%d,%d)",symbol_name, (int)instance_id, (int)symbol_type,(int)element_length, (int)array_dims[0], (int)array_dims[1], (int)array_dims[2]);
 
     /* store the symbol data into the hashtable. */
-    tag_info = hashtable_get(tag_info_table, symbol_name, (int)string_len);
+    tag_info = get_tag_info(plc, symbol_name);
     if(!tag_info) {
-        /* make an entry */
-        tag_info = mem_alloc(sizeof(struct logix_tag_info_t));
-        if(!tag_info) {
-            pdebug(DEBUG_ERROR,"Unable to allocate new tag_info struct!");
-            return PLCTAG_ERR_NO_MEM;
-        }
-
-        /* add the instance to the hashtable */
-        rc = hashtable_put(tag_info_table, symbol_name, (int)string_len, tag_info);
-
-        if(rc != PLCTAG_STATUS_OK) {
-            pdebug(DEBUG_WARN,"Unable to insert new info struct into tag info table!");
-            return rc;
-        }
+        pdebug(DEBUG_WARN,"Unable to get tag info struct!");
+        return PLCTAG_ERR_NO_MEM;
     } else {
         /* rc is going to be set to the number of bytes retrieved in bytebuf_unmarshal() above. */
         rc = PLCTAG_STATUS_OK;
@@ -1246,7 +1343,7 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
         data_start = bytebuf_get_cursor(plc->data);
 
         do {
-            rc = process_get_tags_reply_entries(plc->data, plc->tag_info, &last_instance_id);
+            rc = process_get_tags_reply_entries(plc->data, plc, &last_instance_id);
 
             /* point the last instance ID just past the one we retrieved. */
             if(rc == PLCTAG_STATUS_OK) {
