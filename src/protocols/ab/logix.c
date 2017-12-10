@@ -1193,10 +1193,120 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
 
 int process_write_request(logix_plc_p plc, logix_request_p request)
 {
-    (void) plc;
-    (void) request;
+    int rc = PLCTAG_STATUS_OK;
+    attr attribs = NULL;
+    tag_p tag = NULL;
+    const char *tag_name = NULL;
+    logix_tag_info_p tag_info = NULL;
+    int elem_count = 0;
+    bytebuf_p tag_buf = NULL;
+    int offset = 0;
+    int remaining = 0;
+    uint32_t eip_status = 0;
+    uint8_t cip_status = 0;
+    uint16_t cip_extended_status = 0;
 
-    return PLCTAG_ERR_NOT_IMPLEMENTED;
+    pdebug(DEBUG_INFO,"Starting.");
+
+    if(!plc) {
+        pdebug(DEBUG_WARN, "PLC pointer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!plc->data) {
+        pdebug(DEBUG_WARN,"PLC data buffer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!request) {
+        pdebug(DEBUG_WARN,"Request pointer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag = request_get_tag(request);
+    if(!tag) {
+        pdebug(DEBUG_WARN, "Tag pointer in request is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag_buf = tag_get_bytebuf(tag);
+    if(!tag_buf) {
+        pdebug(DEBUG_WARN,"Tag data buffer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    attribs = tag_get_attribs(tag);
+    if(!attribs) {
+        pdebug(DEBUG_WARN,"Tag attributes are null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag_name = attr_get_str(attribs,"tag",NULL);
+    if(!tag_name || str_length(tag_name) == 0) {
+        pdebug(DEBUG_WARN, "Tag name is empty or null.");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag_info = get_tag_info(plc, tag_name);
+    if(!tag_info) {
+        pdebug(DEBUG_WARN,"Unable to get tag info struct!");
+        return PLCTAG_ERR_BAD_DATA;
+    }
+
+    /*
+     * set up the element count.   If it is zero, then get the
+     * real count from the array dimensions.
+     */
+    elem_count = attr_get_int(attribs,"elem_count", 0);
+    if(elem_count == 0) {
+        elem_count = 1;
+
+        for(int i=0; i < (int)((sizeof(tag_info->array_dims)/sizeof(tag_info->array_dims[0]))); i++) {
+            /* skip if it is zero */
+            if(tag_info->array_dims[i] != 0) {
+                elem_count = elem_count * tag_info->array_dims[i];
+            }
+        }
+    }
+
+    do {
+        /* set the cursor back to zero so that we can start writing the data to the socket. */
+        rc = bytebuf_reset(plc->data);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error inserting resetting byte buffer!");
+            return rc;
+        }
+
+
+        rc = bytebuf_set_cursor(tag_get_bytebuf(tag), 0);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Error inserting setting cursor to start of buffer!");
+            return rc;
+        }
+
+        rc = marshal_cip_write(plc->data, tag_name, tag_info->type_bytes, tag_info->type_byte_length, elem_count, &offset, MAX_CIP_COMMAND_SIZE, tag_get_bytebuf(tag));
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to marshal CIP read command!");
+            return rc;
+        }
+
+        rc = perform_connected_request(plc, request, &eip_status, &cip_status, &cip_extended_status);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to send/receive CIP read command!");
+            return rc;
+        }
+
+        remaining = bytebuf_get_size(tag_get_bytebuf(tag)) - offset;
+    } while(!request_get_abort(request) && !rc_thread_check_abort() && rc == PLCTAG_STATUS_OK && remaining > 0);
+
+    if(rc_thread_check_abort() || request_get_abort(request)) {
+        pdebug(DEBUG_WARN,"Aborting request!");
+        rc = PLCTAG_ERR_ABORT;
+    }
+
+    pdebug(DEBUG_INFO,"Done.");
+
+    return rc;
 }
 
 

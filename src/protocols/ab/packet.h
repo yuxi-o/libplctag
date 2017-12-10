@@ -72,6 +72,9 @@
 /***********************************************************************
  ***************************** CIP Data ********************************
  **********************************************************************/
+
+#define MAX_CIP_COMMAND_SIZE (470)   /* this is estimated but safely low? */
+
 #define AB_CIP_OK ((uint8_t)0)
 #define AB_CIP_CMD_OK ((uint8_t)0x80)
 
@@ -162,7 +165,8 @@ extern int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance);
 extern int marshal_cip_read(bytebuf_p buf, const char *name, int elem_count, int offset);
 extern int unmarshal_cip_read(int prev_rc, bytebuf_p buf, int *type_info_index, int *type_info_length);
 
-extern int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data);
+extern int marshal_cip_write(bytebuf_p buf, const char *name, uint8_t *type_info, int type_info_length, int elem_count, int *offset, int max_command_size, bytebuf_p tag_data);
+extern int unmarshal_cip_write(bytebuf_p buf);
 
 extern int marshal_cip_cm_unconnected(int prev_rc, bytebuf_p buf, const char *ioi_path);
 extern int unmarshal_cip_response_header(int prev_rc, bytebuf_p buf, uint8_t *reply_service, uint8_t *status, uint16_t *extended_status);

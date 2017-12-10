@@ -579,21 +579,160 @@ int unmarshal_cip_read(int prev_rc, bytebuf_p buf, int *type_info_index, int *ty
     return rc;
 }
 
-int marshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data)
+int marshal_cip_write(bytebuf_p buf, const char *name, uint8_t *type_info, int type_info_length, int elem_count, int *offset, int max_command_size, bytebuf_p tag_data)
 {
-    (void)buf;
-    (void)name;
-    (void)tag_data;
+    int rc = PLCTAG_STATUS_OK;
+    int command_pos = 0;
+    int last_pos = 0;
+    int remainder = 0;
 
-    return PLCTAG_ERR_NOT_IMPLEMENTED;
+    /*
+      packet has the following format:
+    u8 - CIP write command
+    u8[] - tag name, encoded
+    u8[] - type data
+    u16 - element count
+    u32 - byte offset (if the tag has enough data)
+    u8[] tag data
+    */
+
+
+    /*
+     * We need to construct the packet a bit speculatively.
+     * We try to write the data as if it is going to fit into
+     * the max command size.   If it does, we continue.
+     * If it does not, then we patch up the CIP command to
+     * use the fragmented write command and add the offset before
+     * the data.
+     */
+
+    /* get the current position for later reset of the packet size. */
+    command_pos = bytebuf_get_cursor(buf);
+
+    /* inject the size placeholder and read command byte */
+    rc = bytebuf_marshal(buf, BB_U8, AB_CIP_WRITE);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set CIP command to write in buffer!");
+        return rc;
+    }
+
+    /* process the tag name */
+    rc = cip_encode_tag_name(buf, name);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to encode tag name!  Check tag name format!");
+        return rc;
+    }
+
+    /* set the type data and the element count to write. */
+    rc = bytebuf_marshal(buf, BB_BYTES, type_info, type_info_length, BB_U16, (uint16_t)elem_count);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to set type info or number of elements to write!");
+        return rc;
+    }
+
+    /* now check what we have left. If there isn't enough space, we fragment. */
+    if((max_command_size - bytebuf_get_size(buf)) < bytebuf_get_size(tag_data)) {
+        last_pos = bytebuf_get_cursor(buf);
+
+        /* seek to the command */
+        rc = bytebuf_set_cursor(buf, command_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+            return rc;
+        }
+
+        /* set the correct command */
+        rc = bytebuf_marshal(buf, BB_U8, AB_CIP_WRITE_FRAG);
+        if(rc < PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to set CIP command to write (fragmented) in buffer!");
+            return rc;
+        }
+
+        /* seek to the end */
+        rc = bytebuf_set_cursor(buf, last_pos);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+            return rc;
+        }
+
+        /* set the offset. */
+        rc = bytebuf_marshal(buf, BB_U32, (uint32_t)*offset);
+        if(rc < PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN,"Unable to set number of elements to read or offset!");
+            return rc;
+        }
+
+        last_pos = bytebuf_get_cursor(buf);
+    }
+
+    /*
+     * now copy the data.
+     *
+     * First, figure out how much we can copy.   Then make sure that it is
+     * a multiple of 4 bytes in length.
+     */
+
+    remainder = max_command_size - bytebuf_get_size(buf);
+    remainder = remainder & 0xFFFFFC; /* round down to nearest multiple of 4 */
+
+    /*
+     * if there is less left than we can fit in the remaining space, then adjust
+     * the remainder.
+     */
+    if(remainder > (bytebuf_get_size(tag_data) -  *offset)) {
+        remainder = (bytebuf_get_size(tag_data) -  *offset);
+    }
+
+    /* expand the size of the buffer */
+    //~ rc = bytebuf_set_capacity(buf, bytebuf_get_size(buf) + remainder);
+    //~ if(rc != PLCTAG_STATUS_OK) {
+        //~ pdebug(DEBUG_WARN,"Unable to set capacity for tag data space!");
+        //~ return rc;
+    //~ }
+
+    pdebug(DEBUG_DETAIL,"buf size=%d", bytebuf_get_size(buf));
+    pdebug(DEBUG_DETAIL,"buf cursor=%d", bytebuf_get_cursor(buf));
+    pdebug(DEBUG_DETAIL,"tag buf size=%d", bytebuf_get_size(tag_data));
+    pdebug(DEBUG_DETAIL,"tag buf cursor=%d", bytebuf_get_cursor(tag_data));
+    pdebug(DEBUG_DETAIL,"remainder=%d", remainder);
+    pdebug(DEBUG_DETAIL,"offset=%d", *offset);
+
+
+
+    /* copy the data */
+    //~ mem_copy(bytebuf_get_buffer(buf), bytebuf_get_buffer(tag_data) + *offset, remainder);
+
+    rc = bytebuf_marshal(buf, BB_BYTES, bytebuf_get_buffer(tag_data) + *offset, remainder);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal tag write data!");
+        return rc;
+    }
+
+    *offset += remainder;
+
+    /* print out the packet */
+    rc = bytebuf_set_cursor(buf, command_pos);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to start of new data!");
+        return rc;
+    }
+
+    pdebug(DEBUG_DETAIL,"Created new packet data:");
+    pdebug_dump_bytes(DEBUG_DETAIL, bytebuf_get_buffer(buf), last_pos + remainder);
+
+    rc = bytebuf_set_cursor(buf, last_pos + remainder);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to seek to end of new data!");
+        return rc;
+    }
+
+    return rc;
 }
 
 
-int unmarshal_cip_write(bytebuf_p buf, const char *name, bytebuf_p tag_data)
+int unmarshal_cip_write(bytebuf_p buf)
 {
     (void)buf;
-    (void)name;
-    (void)tag_data;
 
     return PLCTAG_ERR_NOT_IMPLEMENTED;
 }

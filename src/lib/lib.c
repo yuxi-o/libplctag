@@ -55,8 +55,8 @@ struct tag_t {
     mutex_p external_mut;
 
     attr attribs;
-    int read_in_flight;
-    int write_in_flight;
+    //~ int read_in_flight;
+    //~ int write_in_flight;
     int create_in_flight;
 
     int64_t read_cache_expire_ms;
@@ -566,11 +566,11 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
     }
 
     critical_block(tag->api_mut) {
-        if(tag->write_in_flight || tag->create_in_flight) {
-            pdebug(DEBUG_WARN,"Conflicting operation already in progress!");
-            rc = PLCTAG_ERR_BUSY;
-            break;
-        }
+        //~ if(tag->write_in_flight || tag->create_in_flight) {
+            //~ pdebug(DEBUG_WARN,"Conflicting operation already in progress!");
+            //~ rc = PLCTAG_ERR_BUSY;
+            //~ break;
+        //~ }
 
         /* check read cache, if not expired, return existing data. */
         if(tag->read_cache_expire_ms > time_ms()) {
@@ -587,9 +587,9 @@ LIB_EXPORT int plc_tag_read(tag_id id, int timeout)
             break;
         }
 
-        if(rc == PLCTAG_STATUS_PENDING) {
-            tag->read_in_flight = 1;
-        }
+        //~ if(rc == PLCTAG_STATUS_PENDING) {
+            //~ tag->read_in_flight = 1;
+        //~ }
 
         /*
          * if there is a timeout, then loop until we get
@@ -650,8 +650,8 @@ LIB_EXPORT int plc_tag_status(tag_id id)
 
         if(rc == PLCTAG_STATUS_OK) {
             tag->create_in_flight = 0;
-            tag->read_in_flight = 0;
-            tag->write_in_flight = 0;
+            //~ tag->read_in_flight = 0;
+            //~ tag->write_in_flight = 0;
         }
     }
 
@@ -694,11 +694,11 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
     }
 
     critical_block(tag->api_mut) {
-        if(tag->read_in_flight || tag->create_in_flight) {
-            pdebug(DEBUG_WARN,"Conflicting operation already in progress!");
-            rc = PLCTAG_ERR_BUSY;
-            break;
-        }
+        //~ if(tag->read_in_flight || tag->create_in_flight) {
+            //~ pdebug(DEBUG_WARN,"Conflicting operation already in progress!");
+            //~ rc = PLCTAG_ERR_BUSY;
+            //~ break;
+        //~ }
 
         /* the protocol implementation does not do the timeout. */
         rc = tag->op_func(tag, tag->impl_data, TAG_OP_WRITE);
@@ -709,9 +709,9 @@ LIB_EXPORT int plc_tag_write(tag_id id, int timeout)
             break;
         }
 
-        if(rc == PLCTAG_STATUS_PENDING) {
-            tag->write_in_flight = 1;
-        }
+        //~ if(rc == PLCTAG_STATUS_PENDING) {
+            //~ tag->write_in_flight = 1;
+        //~ }
 
         /*
          * if there is a timeout, then loop until we get

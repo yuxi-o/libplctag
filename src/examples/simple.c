@@ -24,17 +24,17 @@
 #include "utils.h"
 
 
-#define TAG_PATH "plc=AB ControlLogix&path=10.206.1.39,1,5&elem_count=1000&tag=TestBIGArray[0]&debug=1"
-#define ELEM_COUNT 1000
-#define ELEM_SIZE 4
-#define DATA_TIMEOUT 1000
+#define TAG_PATH "plc=AB ControlLogix&path=10.206.1.39,1,5&tag=TestBIGArray&debug=4"
+#define DATA_TIMEOUT (1000)
+#define ELEM_SIZE (4)
 
 
 int main(int argc, char **argv)
 {
     tag_id tag = PLC_TAG_NULL;
-    int rc;
-    int i;
+    int rc = 0;
+    int i = 0;
+    int num_elements = 0;
 
     (void)argc;
     (void)argv;
@@ -57,12 +57,13 @@ int main(int argc, char **argv)
     }
 
     /* print out the data */
-    for(i=0; i < ELEM_COUNT; i++) {
+    num_elements = (plc_tag_get_size(tag)/ELEM_SIZE);
+    for(i=0; i < num_elements; i++) {
         fprintf(stderr,"data[%d]=%d\n",i,plc_tag_get_int32(tag,(i*ELEM_SIZE)));
     }
 
     /* now test a write */
-    for(i=0; i < ELEM_COUNT; i++) {
+    for(i=0; i < num_elements; i++) {
         int32_t val = plc_tag_get_int32(tag,(i*ELEM_SIZE));
 
         val = val+1;
@@ -88,7 +89,7 @@ int main(int argc, char **argv)
     }
 
     /* print out the data */
-    for(i=0; i < ELEM_COUNT; i++) {
+    for(i=0; i < num_elements; i++) {
         fprintf(stderr,"data[%d]=%d\n",i,plc_tag_get_int32(tag,(i*ELEM_SIZE)));
     }
 
