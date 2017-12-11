@@ -73,7 +73,7 @@
  ***************************** CIP Data ********************************
  **********************************************************************/
 
-#define MAX_CIP_COMMAND_SIZE (470)   /* this is estimated but safely low? */
+#define MAX_CIP_COMMAND_SIZE (490)   /* this is estimated but safely low? */
 
 #define AB_CIP_OK ((uint8_t)0)
 #define AB_CIP_CMD_OK ((uint8_t)0x80)

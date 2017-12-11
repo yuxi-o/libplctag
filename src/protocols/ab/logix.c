@@ -1297,6 +1297,8 @@ int process_write_request(logix_plc_p plc, logix_request_p request)
         }
 
         remaining = bytebuf_get_size(tag_get_bytebuf(tag)) - offset;
+
+        pdebug(DEBUG_DETAIL,"offset = %d, remaining = %d", offset, remaining);
     } while(!request_get_abort(request) && !rc_thread_check_abort() && rc == PLCTAG_STATUS_OK && remaining > 0);
 
     if(rc_thread_check_abort() || request_get_abort(request)) {
