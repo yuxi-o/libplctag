@@ -150,6 +150,8 @@ set ( libplctag_SRCS "${platform_SRC_PATH}/platform.c"
                      "${ab_SRC_PATH}/packet.h"
                      "${ab_SRC_PATH}/logix.c"
                      "${ab_SRC_PATH}/logix.h"
+                     "${ab_SRC_PATH}/micro800.c"
+                     "${ab_SRC_PATH}/micro800.h"
                      )
 
 # set the compiler flags
@@ -201,6 +203,7 @@ if (UNIX)
                            #~ plc5
                            simple
                            #~ simple_dual
+                           simple_group
                            #~ slc500
                            #~ string
                            test_special

@@ -25,7 +25,7 @@
 #include <lib/libplctag.h>
 #include <ab/packet.h>
 #include <ab/error_codes.h>
-#include <ab/logix.h>
+#include <ab/micro800.h>
 #include <util/debug.h>
 #include <util/rc_thread.h>
 #include <util/resource.h>
@@ -35,7 +35,7 @@
 #define TAG_TYPE_BYTE_LENGTH (16)
 #define MAX_SYMBOL_LEN (41)  /* name segments must be 40 or fewer characters. */
 
-struct logix_tag_info_t {
+struct micro800_tag_info_t {
     /* elements from the PLC, if we can get them. */
     uint16_t type_info;
     uint32_t instance_id;
@@ -49,7 +49,7 @@ struct logix_tag_info_t {
     int type_byte_length;
 };
 
-typedef struct logix_tag_info_t *logix_tag_info_p;
+typedef struct micro800_tag_info_t *micro800_tag_info_p;
 
 
 #define SESSION_RESOURCE_PREFIX "AB CIP Session "
@@ -57,7 +57,7 @@ typedef struct logix_tag_info_t *logix_tag_info_p;
 typedef enum {PLC_STARTING, PLC_OPEN_SESSION, PLC_OPEN_CONNECTION, PLC_RUNNING, PLC_ERROR} plc_state;
 
 
-struct logix_plc_t {
+struct micro800_plc_t {
     char *full_path;
     char *host;
     int port;
@@ -84,12 +84,12 @@ struct logix_plc_t {
 
     bytebuf_p data;
 };
-typedef struct logix_plc_t *logix_plc_p;
+typedef struct micro800_plc_t *micro800_plc_p;
 
 
 typedef enum {REQUEST_NONE, REQUEST_ABORT, REQUEST_READ, REQUEST_WRITE, REQUEST_GET_TAGS} request_type;
 
-typedef struct logix_request_t *logix_request_p;
+typedef struct micro800_request_t *micro800_request_p;
 
 
 /* declarations for our v-table functions */
@@ -100,23 +100,23 @@ static int tag_read(void* plc, tag_p tag);
 static int tag_write(void* plc, tag_p tag);
 
 
-static int setup_socket(logix_plc_p plc);
-static int register_plc(logix_plc_p plc);
-static int connect_plc(logix_plc_p plc);
+static int setup_socket(micro800_plc_p plc);
+static int register_plc(micro800_plc_p plc);
+static int connect_plc(micro800_plc_p plc);
 static void plc_monitor(int arg_count, void **args);
-static logix_plc_p create_plc(const char *path);
+static micro800_plc_p create_plc(const char *path);
 static void plc_destroy(void *plc_arg, int arg_count, void **args);
-static int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
+static int cleanup_micro800_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
 
-static logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name);
+static micro800_tag_info_p get_tag_info(micro800_plc_p plc, const char *tag_name);
 
-static int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
-static int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
-static int process_request(logix_plc_p plc);
-static int process_read_request(logix_plc_p plc, logix_request_p request);
-static int process_write_request(logix_plc_p plc, logix_request_p request);
-static int process_get_tags_reply_entries(bytebuf_p buf, logix_plc_p plc, uint32_t *last_instance_id);
-static int process_get_tags_request(logix_plc_p plc, logix_request_p request);
+static int perform_unconnected_request(micro800_plc_p plc, micro800_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
+static int perform_connected_request(micro800_plc_p plc, micro800_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
+static int process_request(micro800_plc_p plc);
+static int process_read_request(micro800_plc_p plc, micro800_request_p request);
+static int process_write_request(micro800_plc_p plc, micro800_request_p request);
+static int process_get_tags_reply_entries(bytebuf_p buf, micro800_plc_p plc, uint32_t *last_instance_id);
+static int process_get_tags_request(micro800_plc_p plc, micro800_request_p request);
 
 static char *str_dup_from_to(char *from, char *to);
 static int parse_path(const char *full_path, char **host, int *port, char **local_path);
@@ -128,12 +128,12 @@ static char *match_number(char *p);
 
 
 
-static logix_request_p request_create(tag_p tag, request_type operation);
+static micro800_request_p request_create(tag_p tag, request_type operation);
 static void request_destroy(void *request_arg, int extra_arg_count, void **extra_args);
-static request_type request_get_type(logix_request_p request);
-static tag_p request_get_tag(logix_request_p request);
-static int request_abort(logix_request_p request);
-static int request_get_abort(logix_request_p request);
+static request_type request_get_type(micro800_request_p request);
+static tag_p request_get_tag(micro800_request_p request);
+static int request_abort(micro800_request_p request);
+static int request_get_abort(micro800_request_p request);
 
 
 /***********************************************************************
@@ -141,15 +141,15 @@ static int request_get_abort(logix_request_p request);
  **********************************************************************/
 
 
-int logix_tag_create(tag_p tag)
+int micro800_tag_create(tag_p tag)
 {
     char *plc_name = NULL;
-    logix_plc_p plc = NULL;
+    micro800_plc_p plc = NULL;
     attr attribs = tag_get_attribs(tag);
     const char *tag_name = NULL;
     const char *path = NULL;
     bytebuf_p data = NULL;
-    logix_tag_info_p tag_info = NULL;
+    micro800_tag_info_p tag_info = NULL;
     int rc = PLCTAG_STATUS_OK;
 
 
@@ -304,7 +304,7 @@ int dispatch_function(tag_p tag, void *plc_arg, tag_operation op)
 
 int tag_abort(void *plc_arg, tag_p tag)
 {
-    logix_plc_p plc = (logix_plc_p)plc_arg;
+    micro800_plc_p plc = (micro800_plc_p)plc_arg;
     int status = PLCTAG_STATUS_OK;
 
     if(!plc) {
@@ -325,7 +325,7 @@ int tag_abort(void *plc_arg, tag_p tag)
 
     critical_block(plc->mutex) {
         for(int i=0; i < vector_length(plc->requests); i++) {
-            logix_request_p request = vector_get(plc->requests, i);
+            micro800_request_p request = vector_get(plc->requests, i);
 
             if(request_get_tag(request) == tag) {
                 request_abort(request);
@@ -340,9 +340,9 @@ int tag_abort(void *plc_arg, tag_p tag)
 
 int tag_read(void *plc_arg, tag_p tag)
 {
-    logix_plc_p plc = (logix_plc_p)plc_arg;
+    micro800_plc_p plc = (micro800_plc_p)plc_arg;
     int rc = PLCTAG_STATUS_OK;
-    logix_request_p req = NULL;
+    micro800_request_p req = NULL;
     int list_tags = 0;
     attr attribs = NULL;
     int busy = 0;
@@ -385,7 +385,7 @@ int tag_read(void *plc_arg, tag_p tag)
 
     critical_block(plc->mutex) {
         for(int i=0; i < vector_length(plc->requests); i++) {
-            logix_request_p request = vector_get(plc->requests, i);
+            micro800_request_p request = vector_get(plc->requests, i);
 
             if(request_get_tag(request) == tag) {
                 busy = 1;
@@ -424,7 +424,7 @@ int tag_read(void *plc_arg, tag_p tag)
 
 int tag_status(void *plc_arg, tag_p tag)
 {
-    logix_plc_p plc = (logix_plc_p)plc_arg;
+    micro800_plc_p plc = (micro800_plc_p)plc_arg;
     int status = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_DETAIL,"Starting.");
@@ -448,7 +448,7 @@ int tag_status(void *plc_arg, tag_p tag)
 
     critical_block(plc->mutex) {
         for(int i=0; i < vector_length(plc->requests); i++) {
-            logix_request_p request = vector_get(plc->requests, i);
+            micro800_request_p request = vector_get(plc->requests, i);
 
             if(request_get_tag(request) == tag || request_get_tag(request) == NULL) {
                 pdebug(DEBUG_DETAIL,"Operation in progress.");
@@ -464,9 +464,9 @@ int tag_status(void *plc_arg, tag_p tag)
 
 int tag_write(void *plc_arg, tag_p tag)
 {
-    logix_plc_p plc = (logix_plc_p)plc_arg;
+    micro800_plc_p plc = (micro800_plc_p)plc_arg;
     int rc = PLCTAG_STATUS_OK;
-    logix_request_p req = NULL;
+    micro800_request_p req = NULL;
     int busy = 0;
 
     if(!plc) {
@@ -508,7 +508,7 @@ int tag_write(void *plc_arg, tag_p tag)
 
     critical_block(plc->mutex) {
         for(int i=0; i < vector_length(plc->requests); i++) {
-            logix_request_p request = vector_get(plc->requests, i);
+            micro800_request_p request = vector_get(plc->requests, i);
 
             if(request_get_tag(request) == tag) {
                 busy = 1;
@@ -549,7 +549,7 @@ int tag_write(void *plc_arg, tag_p tag)
 
 void plc_destroy(void *plc_arg, int arg_count, void **args)
 {
-    logix_plc_p plc;
+    micro800_plc_p plc;
 
     (void)arg_count;
     (void)args;
@@ -575,7 +575,7 @@ void plc_destroy(void *plc_arg, int arg_count, void **args)
 
     if(plc->requests) {
         for(int i = 0; i < vector_length(plc->requests); i++) {
-            logix_request_p request = vector_get(plc->requests, i);
+            micro800_request_p request = vector_get(plc->requests, i);
 
             if(request) {
                 rc_dec(request);
@@ -589,7 +589,7 @@ void plc_destroy(void *plc_arg, int arg_count, void **args)
 
     if(plc->tag_info) {
         /* clean out the tag info */
-        hashtable_on_each(plc->tag_info, cleanup_logix_info);
+        hashtable_on_each(plc->tag_info, cleanup_micro800_info);
 
         hashtable_destroy(plc->tag_info);
     }
@@ -620,7 +620,7 @@ void plc_destroy(void *plc_arg, int arg_count, void **args)
 
 
 
-int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry)
+int cleanup_micro800_info(hashtable_p table, void *key, int key_len, void *tag_info_entry)
 {
     (void) table;
     (void) key;
@@ -633,16 +633,16 @@ int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info
 
 
 
-logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name)
+micro800_tag_info_p get_tag_info(micro800_plc_p plc, const char *tag_name)
 {
-    logix_tag_info_p tag_info = NULL;
+    micro800_tag_info_p tag_info = NULL;
     int rc = PLCTAG_STATUS_OK;
 
     critical_block(plc->mutex) {
         tag_info = hashtable_get(plc->tag_info, (void *)tag_name, str_length(tag_name));
         if(!tag_info) {
             /* make an entry, plus space for the name. */
-            tag_info = mem_alloc(sizeof(struct logix_tag_info_t) + str_length(tag_name) + 1);
+            tag_info = mem_alloc(sizeof(struct micro800_tag_info_t) + str_length(tag_name) + 1);
             if(!tag_info) {
                 pdebug(DEBUG_ERROR,"Unable to allocate new tag info struct!");
                 return NULL;
@@ -669,7 +669,7 @@ logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name)
 
 void plc_monitor(int arg_count, void **args)
 {
-    logix_plc_p plc;
+    micro800_plc_p plc;
     int rc = PLCTAG_STATUS_OK;
     int state = PLC_STARTING;
 
@@ -753,7 +753,7 @@ void plc_monitor(int arg_count, void **args)
                 break;
 
             case PLC_ERROR: {
-                    logix_request_p request = NULL;
+                    micro800_request_p request = NULL;
                     /* just eat the requests as they come in and do not do anything. */
                     critical_block(plc->mutex) {
                         request = vector_remove(plc->requests,0);
@@ -775,7 +775,7 @@ void plc_monitor(int arg_count, void **args)
 }
 
 
-int setup_socket(logix_plc_p plc)
+int setup_socket(micro800_plc_p plc)
 {
     int rc = PLCTAG_STATUS_OK;
 
@@ -797,9 +797,9 @@ int setup_socket(logix_plc_p plc)
 
 
 
-int process_request(logix_plc_p plc)
+int process_request(micro800_plc_p plc)
 {
-    logix_request_p request = NULL;
+    micro800_request_p request = NULL;
     int rc = PLCTAG_STATUS_OK;
 
     pdebug(DEBUG_INFO,"Starting.");
@@ -859,7 +859,7 @@ int process_request(logix_plc_p plc)
  * Wrap it, send it and wait for the response.  Once the response comes back,
  * then unwrap it.
  */
-int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
+int perform_unconnected_request(micro800_plc_p plc, micro800_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
 {
     int rc = PLCTAG_STATUS_OK;
     uint16_t eip_command = 0;
@@ -945,7 +945,7 @@ int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const 
 }
 
 
-int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
+int perform_connected_request(micro800_plc_p plc, micro800_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status)
 {
     int rc = PLCTAG_STATUS_OK;
     uint16_t eip_command = 0;
@@ -1032,13 +1032,13 @@ int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t
 
 
 
-int process_read_request(logix_plc_p plc, logix_request_p request)
+int process_read_request(micro800_plc_p plc, micro800_request_p request)
 {
     int rc = PLCTAG_STATUS_OK;
     attr attribs = NULL;
     tag_p tag = NULL;
     const char *tag_name = NULL;
-    logix_tag_info_p tag_info = NULL;
+    micro800_tag_info_p tag_info = NULL;
     int elem_count = 0;
     bytebuf_p tag_buf = NULL;
     int offset = 0;
@@ -1193,13 +1193,13 @@ int process_read_request(logix_plc_p plc, logix_request_p request)
 
 
 
-int process_write_request(logix_plc_p plc, logix_request_p request)
+int process_write_request(micro800_plc_p plc, micro800_request_p request)
 {
     int rc = PLCTAG_STATUS_OK;
     attr attribs = NULL;
     tag_p tag = NULL;
     const char *tag_name = NULL;
-    logix_tag_info_p tag_info = NULL;
+    micro800_tag_info_p tag_info = NULL;
     int elem_count = 0;
     bytebuf_p tag_buf = NULL;
     int offset = 0;
@@ -1314,7 +1314,7 @@ int process_write_request(logix_plc_p plc, logix_request_p request)
 }
 
 
-int process_get_tags_reply_entries(bytebuf_p buf, logix_plc_p plc, uint32_t *last_instance_id)
+int process_get_tags_reply_entries(bytebuf_p buf, micro800_plc_p plc, uint32_t *last_instance_id)
 {
     int rc = PLCTAG_STATUS_OK;
     int32_t instance_id = 0;
@@ -1323,7 +1323,7 @@ int process_get_tags_reply_entries(bytebuf_p buf, logix_plc_p plc, uint32_t *las
     uint32_t array_dims[3] = {0,};
     uint16_t string_len  = 0;
     char symbol_name[MAX_SYMBOL_LEN] = {0,};
-    logix_tag_info_p tag_info = NULL;
+    micro800_tag_info_p tag_info = NULL;
 
     pdebug(DEBUG_DETAIL,"Starting.");
 
@@ -1392,7 +1392,7 @@ int process_get_tags_reply_entries(bytebuf_p buf, logix_plc_p plc, uint32_t *las
 
 
 
-int process_get_tags_request(logix_plc_p plc, logix_request_p request)
+int process_get_tags_request(micro800_plc_p plc, micro800_request_p request)
 {
     int rc = PLCTAG_STATUS_OK;
     int data_start = 0;
@@ -1516,7 +1516,7 @@ int process_get_tags_request(logix_plc_p plc, logix_request_p request)
 
 
 
-int register_plc(logix_plc_p plc)
+int register_plc(micro800_plc_p plc)
 {
     int rc = PLCTAG_STATUS_OK;
 
@@ -1629,7 +1629,7 @@ int register_plc(logix_plc_p plc)
 
 
 
-int connect_plc(logix_plc_p plc)
+int connect_plc(micro800_plc_p plc)
 {
     int rc = PLCTAG_STATUS_OK;
     uint16_t eip_command = 0;
@@ -1746,13 +1746,13 @@ int connect_plc(logix_plc_p plc)
  * path looks like "192.168.1.10<:port>,path,to,cpu"
  */
 
-logix_plc_p create_plc(const char *path)
+micro800_plc_p create_plc(const char *path)
 {
-    logix_plc_p plc = NULL;
-    logix_request_p req = NULL;
+    micro800_plc_p plc = NULL;
+    micro800_request_p req = NULL;
     int rc = PLCTAG_STATUS_OK;
 
-    plc = rc_alloc(sizeof(struct logix_plc_t), plc_destroy);
+    plc = rc_alloc(sizeof(struct micro800_plc_t), plc_destroy);
     if(!plc) {
         pdebug(DEBUG_ERROR,"Unable to allocate PLC struct!");
         return NULL;
@@ -2073,7 +2073,7 @@ char *match_number(char *p)
  ************************** Request Functions **************************
  **********************************************************************/
 
-struct logix_request_t {
+struct micro800_request_t {
     request_type operation;
 
     tag_p tag;
@@ -2082,13 +2082,13 @@ struct logix_request_t {
 
 
 
- logix_request_p request_create(tag_p tag, request_type operation)
+ micro800_request_p request_create(tag_p tag, request_type operation)
 {
-    logix_request_p req;
+    micro800_request_p req;
 
     pdebug(DEBUG_INFO,"Starting.");
 
-    req = rc_alloc(sizeof(struct logix_request_t), request_destroy);
+    req = rc_alloc(sizeof(struct micro800_request_t), request_destroy);
     if(!req) {
         pdebug(DEBUG_ERROR,"Unable to allocate new request!");
         return NULL;
@@ -2107,7 +2107,7 @@ struct logix_request_t {
 
 void request_destroy(void *request_arg, int extra_arg_count, void **extra_args)
 {
-    logix_request_p request = request_arg;
+    micro800_request_p request = request_arg;
 
     pdebug(DEBUG_INFO,"Starting.");
 
@@ -2131,7 +2131,7 @@ void request_destroy(void *request_arg, int extra_arg_count, void **extra_args)
 }
 
 
-request_type request_get_type(logix_request_p request)
+request_type request_get_type(micro800_request_p request)
 {
     if(!request) {
         pdebug(DEBUG_WARN,"NULL request passed!");
@@ -2142,7 +2142,7 @@ request_type request_get_type(logix_request_p request)
 }
 
 
-tag_p request_get_tag(logix_request_p request)
+tag_p request_get_tag(micro800_request_p request)
 {
     if(!request) {
         pdebug(DEBUG_WARN,"NULL request passed!");
@@ -2153,7 +2153,7 @@ tag_p request_get_tag(logix_request_p request)
 }
 
 
-int request_abort(logix_request_p request)
+int request_abort(micro800_request_p request)
 {
     if(!request) {
         pdebug(DEBUG_WARN,"NULL request passed!");
@@ -2166,7 +2166,7 @@ int request_abort(logix_request_p request)
 }
 
 
-int request_get_abort(logix_request_p request)
+int request_get_abort(micro800_request_p request)
 {
     if(!request) {
         pdebug(DEBUG_WARN,"NULL request passed!");
