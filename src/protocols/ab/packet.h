@@ -55,6 +55,7 @@
  **********************************************************************/
 
 #define AB_CIP_CMD_UNCONNECTED_SEND     ((uint8_t)0x52)
+#define AB_CIP_CMD_MULTISERVICE         ((uint8_t)0x0A)
 
 /* CPF item definitions */
 #define AB_CIP_ITEM_NAI ((uint16_t)0x0000) /* NULL Address Item */
