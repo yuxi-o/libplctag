@@ -804,6 +804,25 @@ int process_request(logix_plc_p plc)
 
     pdebug(DEBUG_INFO,"Starting.");
 
+    /*
+     * TODO
+     * Loop over the list of requests.  
+     * While there is space in the request,
+     *     Get a request, encode a CIP request from it.
+     *     Encode Multiple Request header.
+     * If there is not enough room for another, stop.
+     * 
+     * Use fixed length array.   logix_request_p requests[50]; should be enough.
+     * As each request is fulfulled, null out the entry and keep going until all
+     * are done.
+     * 
+     * Keep on additional bytebuf for the encoding of each request.   If the
+     * request is a write, make sure to take into account the amount of space already
+     * used.
+     */
+
+
+
     /* get a request from the queue. */
     critical_block(plc->mutex) {
         if(vector_length(plc->requests) > 0) {
@@ -827,6 +846,10 @@ int process_request(logix_plc_p plc)
 
             case REQUEST_GET_TAGS:
                 rc = process_get_tags_request(plc, request);
+                break;
+
+            case REQUEST_ABORT:
+                // FIXME
                 break;
 
             default:
