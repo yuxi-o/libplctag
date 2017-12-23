@@ -416,7 +416,7 @@ int marshal_cip_get_tag_info(bytebuf_p buf, uint32_t start_instance)
                         BB_U8, (uint8_t)(((sizeof(req_path)/sizeof(req_path[0])) + 2)/2),  /* should be 3 16-bit words */
                         BB_BYTES, req_path, (sizeof(req_path)/sizeof(req_path[0])),
                         BB_U16, (uint16_t)start_instance,
-                        BB_U16, (uint16_t)4, /* get two attributes. */
+                        BB_U16, (uint16_t)4, /* get four attributes. */
                         BB_U16, 0x2,  /* MAGIC - attribute #2 is the symbol type. */
                         BB_U16, 0x7,  /* MAGIC - byte count, size of one tag element in bytes. */
                         BB_U16, 0x8,   /* array dimensions */
