@@ -106,7 +106,7 @@ static int connect_plc(logix_plc_p plc);
 static void plc_monitor(int arg_count, void **args);
 static logix_plc_p create_plc(const char *path);
 static void plc_destroy(void *plc_arg, int arg_count, void **args);
-static int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry);
+static int cleanup_tag_info_entry(hashtable_p table, void *key, int key_len, void *tag_info_entry);
 
 static logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name);
 
@@ -589,7 +589,7 @@ void plc_destroy(void *plc_arg, int arg_count, void **args)
 
     if(plc->tag_info) {
         /* clean out the tag info */
-        hashtable_on_each(plc->tag_info, cleanup_logix_info);
+        hashtable_on_each(plc->tag_info, cleanup_tag_info_entry);
 
         hashtable_destroy(plc->tag_info);
     }
@@ -620,7 +620,7 @@ void plc_destroy(void *plc_arg, int arg_count, void **args)
 
 
 
-int cleanup_logix_info(hashtable_p table, void *key, int key_len, void *tag_info_entry)
+int cleanup_tag_info_entry(hashtable_p table, void *key, int key_len, void *tag_info_entry)
 {
     (void) table;
     (void) key;

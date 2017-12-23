@@ -34,3 +34,5 @@ ipch/
 [Rr]elease*/
 Ankh.NoLoad
 
+.vscode
+.vscode/build
