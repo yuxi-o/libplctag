@@ -36,3 +36,4 @@ Ankh.NoLoad
 
 .vscode
 .vscode/build
+build/
