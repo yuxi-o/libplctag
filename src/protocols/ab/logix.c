@@ -89,7 +89,7 @@ struct logix_plc_t {
 typedef struct logix_plc_t *logix_plc_p;
 
 
-typedef enum {REQUEST_NONE, REQUEST_ABORT, REQUEST_READ, REQUEST_WRITE, REQUEST_GET_TAGS} request_type;
+typedef enum {REQUEST_NONE, REQUEST_READ, REQUEST_WRITE, REQUEST_GET_TAGS} request_type;
 
 typedef struct logix_request_t *logix_request_p;
 
@@ -115,8 +115,9 @@ static logix_tag_info_p get_tag_info(logix_plc_p plc, const char *tag_name);
 //static int perform_unconnected_request(logix_plc_p plc, logix_request_p request, const char *ioi_path, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
 //static int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status);
 static int encode_multi_service_packet(logix_plc_p plc, vector_p requests);
-static int perform_multi_service_request(logix_plc_p plc, int *done, int *num_requests, int *request_offsets);
+static int perform_multi_service_request(logix_plc_p plc, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status, int *num_requests, int *request_offsets);
 static int process_requests(logix_plc_p plc);
+static int process_read_response(logix_plc_p plc, int response_end, logix_request_p request);
 //static int process_read_request(logix_plc_p plc, logix_request_p request);
 //static int process_write_request(logix_plc_p plc, logix_request_p request);
 static int process_get_tags_reply_entries(bytebuf_p buf, logix_plc_p plc, uint32_t *last_instance_id);
@@ -813,7 +814,7 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
 {
     logix_request_p request = NULL;
     int rc = PLCTAG_STATUS_OK;
-    int done = 0;
+    //int done = 0;
     int num_requests = 0;
     int request_offsets[MAX_REQUESTS] = {0,};
     bytebuf_p tmp_buf = bytebuf_create(MAX_CIP_COMMAND_SIZE, AB_BYTE_ORDER_INT16, AB_BYTE_ORDER_INT32, AB_BYTE_ORDER_INT64, AB_BYTE_ORDER_FLOAT32, AB_BYTE_ORDER_FLOAT64);  /* MAGIC */
@@ -834,37 +835,46 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
         return PLCTAG_ERR_NO_MEM;
     }
 
-    for(int i=0; i < vector_length(requests); i++) {
+    if(vector_length(requests) <= 0) {
+        return PLCTAG_ERR_NO_DATA;
+    }
+
+    for(int i=0; i < vector_length(requests) && i < MAX_REQUESTS; i++) {
         request = vector_get(requests, i);
 
         /* reset the temporary buffer to use for encoding. */
         rc = bytebuf_reset(tmp_buf);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN,"Error inserting resetting byte buffer!");
+            bytebuf_destroy(tmp_buf);
             return rc;
         }
 
         tag = request_get_tag(request);
         if(!tag) {
             pdebug(DEBUG_WARN, "Tag pointer in request is null!");
+            bytebuf_destroy(tmp_buf);
             return PLCTAG_ERR_NULL_PTR;
         }
 
         attribs = tag_get_attribs(tag);
         if(!attribs) {
             pdebug(DEBUG_WARN,"Tag attributes are null!");
+            bytebuf_destroy(tmp_buf);
             return PLCTAG_ERR_NULL_PTR;
         }
 
         tag_name = attr_get_str(attribs,"tag",NULL);
         if(!tag_name || str_length(tag_name) == 0) {
             pdebug(DEBUG_WARN, "Tag name is empty or null.");
+            bytebuf_destroy(tmp_buf);
             return PLCTAG_ERR_NULL_PTR;
         }
 
         tag_info = get_tag_info(plc, tag_name);
         if(!tag_info) {
             pdebug(DEBUG_WARN,"Unable to get tag info struct!");
+            bytebuf_destroy(tmp_buf);
             return PLCTAG_ERR_BAD_DATA;
         }
         
@@ -886,6 +896,7 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
                 rc = marshal_cip_read(tmp_buf, tag_name, elem_count, request_get_offset(request));
                 if(rc != PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Unable to marshal CIP read command!");
+                    bytebuf_destroy(tmp_buf);
                     return rc;
                 }
 
@@ -897,6 +908,7 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
                 rc = bytebuf_set_cursor(tag_get_bytebuf(tag), 0);
                 if(rc != PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Error inserting setting cursor to start of buffer!");
+                    bytebuf_destroy(tmp_buf);
                     return rc;
                 }
 
@@ -905,6 +917,7 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
                 rc = marshal_cip_write(tmp_buf, tag_name, tag_info->type_bytes, tag_info->type_byte_length, elem_count, &offset, remaining_bytes, tag_get_bytebuf(tag));
                 if(rc != PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Unable to marshal CIP write command!");
+                    bytebuf_destroy(tmp_buf);
                     return rc;
                 }
                 //request_set_offset(request, offset);
@@ -917,6 +930,7 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
                 rc = marshal_cip_get_tag_info(tmp_buf, offset);
                 if(rc != PLCTAG_STATUS_OK) {
                     pdebug(DEBUG_WARN,"Unable to marshal CIP get tag info command!");
+                    bytebuf_destroy(tmp_buf);
                     return rc;
                 }
 
@@ -932,6 +946,7 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
 
             default:
                 pdebug(DEBUG_WARN,"Unknown request type! %d", request_get_type(request));
+                bytebuf_destroy(tmp_buf);
                 return PLCTAG_ERR_NOT_IMPLEMENTED;
                 break;
         }
@@ -945,14 +960,19 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
             rc = bytebuf_set_cursor(tmp_buf, 0);
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Unable to move cursor to beginning of temporary byte buffer!");
+                bytebuf_destroy(tmp_buf);
                 return rc;
             }
 
             rc = bytebuf_marshal(plc_data, BB_BYTES, bytebuf_get_buffer(tmp_buf), bytebuf_get_size(tmp_buf));
             if(rc != PLCTAG_STATUS_OK) {
                 pdebug(DEBUG_WARN,"Unable to temporary data into PLC byte buffer!");
+                bytebuf_destroy(tmp_buf);
                 return rc;
             }
+
+            /* mark that this request is in flight. */
+            request_set_inflight(request, 1);
 
             request_offsets[num_requests] = tmp_offset; /* we will need to adjust this later. */
             num_requests++;
@@ -966,6 +986,9 @@ int encode_multi_service_packet(logix_plc_p plc, vector_p requests)
             break;
         }        
     }
+
+    /* finally done with the temporary byte buffer */
+    bytebuf_destroy(tmp_buf);
 
     /* now build the header for the multiple service packet. */
 
@@ -1008,6 +1031,9 @@ int process_requests(logix_plc_p plc)
     int done = 0;
     int num_requests = 0;
     int request_offsets[MAX_REQUESTS] = {0,};
+    uint32_t eip_status = 0;
+    uint8_t cip_status = 0;
+    uint16_t cip_extended_status = 0;
 
     pdebug(DEBUG_INFO,"Starting.");
 
@@ -1025,7 +1051,7 @@ int process_requests(logix_plc_p plc)
          */         
         critical_block(plc->mutex) {
             if(vector_length(plc->requests) > 0) {
-                rc = encode_multi_service_packet(plc->data, plc->requests);
+                rc = encode_multi_service_packet(plc, plc->requests);
             } else {
                 rc = PLCTAG_ERR_NO_DATA;
             }
@@ -1041,7 +1067,7 @@ int process_requests(logix_plc_p plc)
             return rc;
         }
 
-        rc = perform_multi_service_request(plc, &done, &num_requests, request_offsets);
+        rc = perform_multi_service_request(plc, &eip_status, &cip_status, &cip_extended_status, &num_requests, request_offsets);
         if(rc != PLCTAG_STATUS_OK) {
             pdebug(DEBUG_WARN, "Unable to perform multi-service request!");
             return rc;
@@ -1091,15 +1117,15 @@ int process_requests(logix_plc_p plc)
 
         switch(op) {
             case REQUEST_READ:
-                rc = process_read_request(plc, request);
+                rc = process_read_response(plc, request);
                 break;
 
             case REQUEST_WRITE:
-                rc = process_write_request(plc, request);
+                rc = process_write_response(plc, request);
                 break;
 
             case REQUEST_GET_TAGS:
-                rc = process_get_tags_request(plc, request);
+                rc = process_get_tags_response(plc, request);
                 break;
 
             case REQUEST_ABORT:
@@ -1306,6 +1332,216 @@ int perform_connected_request(logix_plc_p plc, logix_request_p request, uint32_t
     return rc;
 }
 
+
+int perform_multi_service_request(logix_plc_p plc, uint32_t *eip_status, uint8_t *cip_status, uint16_t *cip_extended_status, int *num_requests, int *request_offsets)
+{
+    int rc = PLCTAG_STATUS_OK;
+    uint16_t eip_command = 0;
+    uint16_t eip_payload_length = 0;
+    uint32_t session_handle = 0;
+    uint64_t session_context = 0;
+    uint8_t cip_reply_service = 0;
+
+    pdebug(DEBUG_INFO,"Starting.");
+
+    rc = marshal_eip_header(marshal_cip_cfp_connected(rc, plc->data, plc->targ_connection_id, ++plc->connection_serial_num),
+                            plc->data,  AB_EIP_CONNECTED_SEND, plc->session_handle, /*++plc->session_context*/ (uint64_t)0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to marshal request!");
+        return rc;
+    }
+
+    /* set the cursor back to zero so that we can start writing the data to the socket. */
+    rc = bytebuf_set_cursor(plc->data, 0);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error inserting setting bytebuffer cursor!");
+        return rc;
+    }
+
+    do {
+        rc = send_eip_packet(plc->sock, plc->data);
+        if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+            /* FIXME - should we kill the plc at this point? */
+            pdebug(DEBUG_WARN,"Unable to send packet!");
+            return rc;
+        }
+    } while(rc == PLCTAG_STATUS_PENDING && !rc_thread_check_abort());
+
+    if(rc_thread_check_abort()) {
+        pdebug(DEBUG_WARN,"Request aborted!");
+        rc = PLCTAG_ERR_ABORT;
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error sending request!");
+        return rc;
+    }
+
+    /* now get the reply */
+
+    /* reset the buffer so that we can read in data. */
+    bytebuf_reset(plc->data);
+
+    do {
+        rc = receive_eip_packet(plc->sock, plc->data);
+        if(rc != PLCTAG_STATUS_OK && rc != PLCTAG_STATUS_PENDING) {
+            pdebug(DEBUG_WARN,"Unable to read in response packet!");
+            return rc;
+        }
+    } while(rc == PLCTAG_STATUS_PENDING && !rc_thread_check_abort());
+
+    if(rc_thread_check_abort()) {
+        pdebug(DEBUG_WARN,"Aborting request!");
+        rc = PLCTAG_ERR_ABORT;
+    }
+
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Error receiving response!");
+        return rc;
+    }
+
+    /* process the response */
+    rc = unmarshal_cip_response_header(unmarshal_cip_cfp_connected(unmarshal_eip_header(plc->data, &eip_command, &eip_payload_length, &session_handle, eip_status, &session_context),
+                                                                    plc->data, plc->orig_connection_id, plc->connection_serial_num),
+                                       plc->data, &cip_reply_service, cip_status, cip_extended_status);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to receive EIP response packet, error %s!", plc_tag_decode_error(rc));
+        return rc;
+    }
+
+    if(*cip_status != AB_CIP_OK && *cip_status != AB_CIP_STATUS_FRAG) {
+        pdebug(DEBUG_WARN,"Response has error! %s (%s)", decode_cip_error(*cip_status, *cip_extended_status, 0), decode_cip_error(*cip_status, *cip_extended_status, 1));
+        return PLCTAG_ERR_REMOTE_ERR;
+    }
+
+    /* unmarshal the multi-service header to find out how many responses we have and how long they are. */
+    rc = unmarshal_cip_multiservice_header(rc, plc->data, num_requests, request_offsets);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN,"Unable to unmarshal the CIP multiservice header!");
+        return rc;
+    }
+
+    return rc;
+}
+
+
+int process_read_response(logix_plc_p plc, int response_end, logix_request_p request)
+{
+    tag_p tag = NULL;
+    bytebuf_p tag_buf = NULL;
+    attr attribs = NULL;
+    int offset = 0;
+    const char *tag_name = NULL;
+    logix_tag_info_p tag_info = NULL;
+    int rc = PLCTAG_STATUS_OK;
+    int type_info_index = 0;
+    int type_info_length = 0;
+    int amount_read_data = 0;
+
+    if(!plc) {
+        pdebug(DEBUG_WARN, "PLC pointer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!plc->data) {
+        pdebug(DEBUG_WARN,"PLC data buffer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    if(!request) {
+        pdebug(DEBUG_WARN,"Request pointer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    offset = request_get_offset(request);
+
+    tag = request_get_tag(request);
+    if(!tag) {
+        pdebug(DEBUG_WARN, "Tag pointer in request is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag_buf = tag_get_bytebuf(tag);
+    if(!tag_buf) {
+        pdebug(DEBUG_WARN,"Tag data buffer is null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    attribs = tag_get_attribs(tag);
+    if(!attribs) {
+        pdebug(DEBUG_WARN,"Tag attributes are null!");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag_name = attr_get_str(attribs,"tag",NULL);
+    if(!tag_name || str_length(tag_name) == 0) {
+        pdebug(DEBUG_WARN, "Tag name is empty or null.");
+        return PLCTAG_ERR_NULL_PTR;
+    }
+
+    tag_info = get_tag_info(plc, tag_name);
+    if(!tag_info) {
+        pdebug(DEBUG_WARN,"Unable to get tag info struct!");
+        return PLCTAG_ERR_BAD_DATA;
+    }
+
+    rc = unmarshal_cip_read(rc, plc->data, &type_info_index, &type_info_length);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error unmarshalling CIP read header!");
+        return rc;
+    }
+
+    /* do we need to copy the type info? */
+    if(tag_info->type_byte_length == 0) {
+        int current_cursor = bytebuf_get_cursor(plc->data);
+
+        if(TAG_TYPE_BYTE_LENGTH < type_info_length) {
+            pdebug(DEBUG_ERROR,"Unable to copy type info because it is too long!  Type info length is %d", type_info_length);
+            return PLCTAG_ERR_TOO_LONG;
+        }
+
+        rc = bytebuf_set_cursor(plc->data, type_info_index);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN, "Error seeking cursor to type info index!");
+            return rc;
+        }
+
+        pdebug(DEBUG_DETAIL,"Copying %d bytes of type information.", type_info_length);
+
+        mem_copy(tag_info->type_bytes, bytebuf_get_buffer(plc->data), type_info_length);
+        tag_info->type_byte_length = type_info_length;
+
+        /* set the cursor back to where we were. */
+        rc = bytebuf_set_cursor(plc->data, current_cursor);
+        if(rc != PLCTAG_STATUS_OK) {
+            pdebug(DEBUG_WARN, "Error seeking cursor past type info!");
+            return rc;
+        }
+    }
+
+    /* copy data from response into tag. */
+    amount_read_data = response_end - bytebuf_get_cursor(plc->data);
+
+    /* set the cursor back to where we want to copy. */
+    rc = bytebuf_set_cursor(tag_buf, offset);
+    if(rc != PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error seeking to offset in tag!");
+        return rc;
+    }
+
+    rc = bytebuf_marshal(tag_buf, BB_BYTES, bytebuf_get_buffer(plc->data), amount_read_data);
+    if(rc < PLCTAG_STATUS_OK) {
+        pdebug(DEBUG_WARN, "Error copying data into tag!");
+        return rc;
+    }
+
+    offset += amount_read_data;
+
+    /* record where we were */
+    request_set_offset(request, offset);
+
+    return rc;
+}
 
 
 
@@ -2356,6 +2592,8 @@ struct logix_request_t {
     int inflight;
     int offset;
 
+    int abort;
+
     tag_p tag;
 };
 
@@ -2475,7 +2713,7 @@ int request_abort(logix_request_p request)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    request->operation = REQUEST_ABORT;
+    request->abort = 1;
 
     return PLCTAG_STATUS_OK;
 }
@@ -2488,6 +2726,6 @@ int request_get_abort(logix_request_p request)
         return PLCTAG_ERR_NULL_PTR;
     }
 
-    return (request->operation == REQUEST_ABORT);
+    return request->abort;
 }
 
