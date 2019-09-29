@@ -52,8 +52,8 @@
  */
 #define RETRY_WAIT_MS (5000)
 
-#define SESSION_DISCONNECT_TIMEOUT (5000)
-
+#define SESSION_DISCONNECT_TIMEOUT_LGX (20000)
+#define SESSION_DISCONNECT_TIMEOUT_DHP (5000)
 
 
 static ab_session_p session_create_unsafe(const char *host, int gw_port, const char *path, int plc_type, int use_connected_msg);
@@ -206,21 +206,32 @@ int session_find_or_create(ab_session_p *tag_session, attr attribs)
     int new_session = 0;
     int shared_session = attr_get_int(attribs, "share_session", 1); /* share the session by default. */
     int rc = PLCTAG_STATUS_OK;
-    int auto_disconnect_enabled = 0;
-    int auto_disconnect_timeout_ms = INT_MAX;
+    int auto_disconnect_enabled = 1;
+    int auto_disconnect_timeout_ms = SESSION_DISCONNECT_TIMEOUT_LGX;
 
     pdebug(DEBUG_DETAIL, "Starting");
 
-    auto_disconnect_timeout_ms = attr_get_int(attribs, "auto_disconnect_ms", INT_MAX);
-    if(auto_disconnect_timeout_ms != INT_MAX) {
+    auto_disconnect_timeout_ms = attr_get_int(attribs, "auto_disconnect_ms", SESSION_DISCONNECT_TIMEOUT_LGX);
+
+    /* make sure it is not zero or negative. */
+    if(auto_disconnect_timeout_ms <= 0) {
+        pdebug(DEBUG_WARN, "auto_disconnect_ms must be greater than zero.");
+        auto_disconnect_timeout_ms = SESSION_DISCONNECT_TIMEOUT_LGX;
+    }
+
+    if(auto_disconnect_timeout_ms != SESSION_DISCONNECT_TIMEOUT_LGX) {
         pdebug(DEBUG_DETAIL, "Setting auto-disconnect after %dms.", auto_disconnect_timeout_ms);
         auto_disconnect_enabled = 1;
     }
 
+    /* DH+ connection? */
     if(plc_type == AB_PROTOCOL_PLC && str_length(session_path) > 0) {
-        /* this means it is DH+ */
         use_connected_msg = 1;
         attr_set_int(attribs, "use_connected_msg", 1);
+
+        if(auto_disconnect_timeout_ms > SESSION_DISCONNECT_TIMEOUT_DHP) {
+            auto_disconnect_timeout_ms = SESSION_DISCONNECT_TIMEOUT_DHP;
+        }
     }
 
     critical_block(session_mutex) {
@@ -520,6 +531,7 @@ ab_session_p session_create_unsafe(const char *host, int gw_port, const char *pa
 //    session->status = PLCTAG_STATUS_PENDING;
     session->failed = 0;
     session->conn_serial_number = (uint16_t)(intptr_t)(session);
+//    session->auto_disconnect_timeout_ms = SESSION_DISCONNECT_TIMEOUT_LGX;
 
     /* check for ID set up. This does not need to be thread safe since we just need a random value. */
     if(srand_setup == 0) {
@@ -954,7 +966,7 @@ THREAD_FUNC(session_handler)
     int rc = PLCTAG_STATUS_OK;
     session_state_t state = SESSION_OPEN_SOCKET;
     int64_t timeout_time = 0;
-    int64_t auto_disconnect_time = 0;
+    int64_t auto_disconnect_time = time_ms() + session->auto_disconnect_timeout_ms;
     int auto_disconnect = 0;
 
 
@@ -976,7 +988,7 @@ THREAD_FUNC(session_handler)
             } else {
                 /* set the timeout for disconnect. */
                 //if(session->auto_disconnect_enabled) {
-                auto_disconnect_time = time_ms() + SESSION_DISCONNECT_TIMEOUT;
+                auto_disconnect_time = time_ms() + session->auto_disconnect_timeout_ms;
                 //}
 
                 state = SESSION_REGISTER;
@@ -1019,7 +1031,7 @@ THREAD_FUNC(session_handler)
             /* if there is work to do, make sure we do not disconnect. */
             critical_block(session->mutex) {
                 if(vector_length(session->requests) > 0) {
-                    auto_disconnect_time = time_ms() + SESSION_DISCONNECT_TIMEOUT;
+                    auto_disconnect_time = time_ms() + session->auto_disconnect_timeout_ms;
                 }
             }
 
@@ -1896,6 +1908,9 @@ int perform_forward_open(ab_session_p session)
                 pdebug(DEBUG_DETAIL, "ForwardOpenEx succeeded with packet size %d.", session->max_payload_size);
             }
         } else if(rc == PLCTAG_ERR_UNSUPPORTED) {
+            /* do not retry using the extended forward open command if we reconnect. */
+            session->use_old_forward_open = 1;
+
             rc = try_forward_open(session);
             if(rc == PLCTAG_ERR_TOO_LARGE) {
                 /* we support the Forward Open Extended command, but we need to use a smaller size. */
@@ -1959,6 +1974,11 @@ int try_forward_open_ex(ab_session_p session, int *packet_size_guess)
 
 
     pdebug(DEBUG_INFO, "Starting.");
+
+    if(session->use_old_forward_open) {
+        pdebug(DEBUG_DETAIL, "Skipping extended forward open as it did not work last time.");
+        return PLCTAG_ERR_UNSUPPORTED;
+    }
 
     critical_block(session->mutex) {
         old_max_payload_size = session->max_payload_size;
@@ -2097,15 +2117,17 @@ int send_forward_open_req(ab_session_p session)
     fo->conn_serial_number = h2le16(session->conn_serial_number); /* our connection SEQUENCE number. */
     fo->orig_vendor_id = h2le16(AB_EIP_VENDOR_ID);               /* our unique :-) vendor ID */
     fo->orig_serial_number = h2le32(AB_EIP_VENDOR_SN);           /* our serial number. */
-    fo->conn_timeout_multiplier = AB_EIP_TIMEOUT_MULTIPLIER;     /* timeout = mult * RPI */
+
 
     fo->orig_to_targ_rpi = h2le32(AB_EIP_RPI); /* us to target RPI - Request Packet Interval in microseconds */
 
     /* screwy logic if this is a DH+ route! */
     if(session->plc_type == AB_PROTOCOL_PLC && session->dhp_dest != 0) {
         fo->orig_to_targ_conn_params = h2le16(AB_EIP_PLC5_PARAM);
+        fo->conn_timeout_multiplier = AB_EIP_TIMEOUT_MULTIPLIER_DHP;     /* timeout = mult * RPI */
     } else {
         fo->orig_to_targ_conn_params = h2le16(AB_EIP_CONN_PARAM | session->max_payload_size); /* packet size and some other things, based on protocol/cpu type */
+        fo->conn_timeout_multiplier = AB_EIP_TIMEOUT_MULTIPLIER_LGX;     /* timeout = mult * RPI */
     }
 
     fo->targ_to_orig_rpi = h2le32(AB_EIP_RPI); /* target to us RPI - not really used for explicit messages? */
@@ -2122,7 +2144,6 @@ int send_forward_open_req(ab_session_p session)
 
     /* set the size of the request */
     session->data_size = (uint32_t)(data - (session->data));
-
     rc = send_eip_request(session, 0);
 
     pdebug(DEBUG_INFO, "Done");
@@ -2184,7 +2205,14 @@ int send_forward_open_req_ex(ab_session_p session)
     fo->conn_serial_number = h2le16(session->conn_serial_number); /* our connection ID/serial number. */
     fo->orig_vendor_id = h2le16(AB_EIP_VENDOR_ID);               /* our unique :-) vendor ID */
     fo->orig_serial_number = h2le32(AB_EIP_VENDOR_SN);           /* our serial number. */
-    fo->conn_timeout_multiplier = AB_EIP_TIMEOUT_MULTIPLIER;     /* timeout = mult * RPI */
+
+    /* screwy logic if this is a DH+ route! */
+    if(session->plc_type == AB_PROTOCOL_PLC && session->dhp_dest != 0) {
+        fo->conn_timeout_multiplier = AB_EIP_TIMEOUT_MULTIPLIER_DHP;     /* timeout = mult * RPI */
+    } else {
+        fo->conn_timeout_multiplier = AB_EIP_TIMEOUT_MULTIPLIER_LGX;     /* timeout = mult * RPI */
+    }
+
     fo->orig_to_targ_rpi = h2le32(AB_EIP_RPI); /* us to target RPI - Request Packet Interval in microseconds */
     fo->orig_to_targ_conn_params_ex = h2le32(AB_EIP_CONN_PARAM_EX | session->max_payload_size); /* packet size and some other things, based on protocol/cpu type */
     fo->targ_to_orig_rpi = h2le32(AB_EIP_RPI); /* target to us RPI - not really used for explicit messages? */

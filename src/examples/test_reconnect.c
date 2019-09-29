@@ -25,8 +25,9 @@
 #include "utils.h"
 
 
-#define TAG_PATH "protocol=ab-eip&gateway=10.206.1.39&path=1,5&cpu=LGX&elem_size=4&elem_count=1&name=TestBigArray&debug=4"
+#define TAG_PATH "protocol=ab-eip&gateway=10.206.1.39&path=1,5&cpu=LGX&elem_size=4&elem_count=1&name=TestBigArray&debug=4&auto_disconnect_ms=10000"
 //#define TAG_PATH "protocol=ab_eip&gateway=10.206.1.38&cpu=PLC5&elem_size=2&elem_count=1&name=N7:0&debug=4"
+//#define TAG_PATH "protocol=ab_eip&gateway=10.206.1.39&path=1,2,A:27:1&cpu=plc5&elem_count=1&elem_size=2&name=N7:0&debug=4"
 #define ELEM_COUNT 1
 #define ELEM_SIZE 4
 //#define ELEM_SIZE 2
@@ -69,21 +70,31 @@ void update_tag(int32_t tag)
 
     /* print out the data */
     for(int i=0; i < ELEM_COUNT; i++) {
-        fprintf(stderr,"data[%d]=%d\n",i,plc_tag_get_int32(tag,(i*ELEM_SIZE)));
-//        fprintf(stderr,"data[%d]=%d\n",i,plc_tag_get_int16(tag,(i*ELEM_SIZE)));
+        if(ELEM_SIZE == 4) {
+            fprintf(stderr,"data[%d]=%d\n",i,plc_tag_get_int32(tag,(i*ELEM_SIZE)));
+        } else {
+            fprintf(stderr,"data[%d]=%d\n",i,plc_tag_get_int16(tag,(i*ELEM_SIZE)));
+        }
     }
 
     /* now test a write */
     for(int i=0; i < ELEM_COUNT; i++) {
-        int32_t val = plc_tag_get_int32(tag,(i*ELEM_SIZE));
-//        int16_t val = plc_tag_get_int16(tag, (i*ELEM_SIZE));
+        int32_t val;
+
+        if(ELEM_SIZE == 4) {
+            val = plc_tag_get_int32(tag,(i*ELEM_SIZE));
+        } else {
+            val = plc_tag_get_int16(tag, (i*ELEM_SIZE));
+        }
 
         val = val+1;
 
         fprintf(stderr,"Setting element %d to %d\n",i,val);
-
-        plc_tag_set_int32(tag,(i*ELEM_SIZE),val);
-//        plc_tag_set_int16(tag,(i*ELEM_SIZE),val);
+        if(ELEM_SIZE == 4) {
+            plc_tag_set_int32(tag,(i*ELEM_SIZE),(int32_t)val);
+        } else {
+            plc_tag_set_int16(tag,(i*ELEM_SIZE),(int16_t)val);
+        }
     }
 
     rc = plc_tag_write(tag, DATA_TIMEOUT);
