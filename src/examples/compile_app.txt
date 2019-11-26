@@ -1,0 +1,10 @@
+gcc -o toggle_bool toggle_bool.c utils_posix.c `pkg-config --cflags --libs libplctag`
+
+
+application:
+./tag_rw -t sint32 -p "protocol=ab_eip&gateway=127.0.0.1&path=1,0&cpu=lgx&elem_size=4&elem_count=10&name=TestDINTArray"
+./tag_rw -t sint32 -p "protocol=ab_eip&gateway=127.0.0.1&path=1,0&cpu=lgx&elem_size=4&elem_count=1000&name=TestBigArray"
+./tag_rw -t real32 -p "protocol=ab_eip&gateway=127.0.0.1&path=1,0&cpu=lgx&elem_size=4&elem_count=20&name=TestREALArray"
+./tag_rw -t uint8 -p "protocol=ab_eip&gateway=127.0.0.1&path=1,5&cpu=lgx&elem_size=1&elem_count=1&name=TestBOOL"
+./tag_rw -t real32 -p "protocol=ab_eip&gateway=127.0.0.1&path=1,0&cpu=lgx&elem_size=4&elem_count=1&name=TestREALArray[10]"
+./tag_rw -t sint32 -p "protocol=ab_eip&gateway=127.0.0.1&path=1,0&cpu=lgx&elem_size=4&elem_count=1&name=TestDINTArray[0]"

@@ -10,7 +10,11 @@ size_t num_tags = 0;
 
 void init_tags()
 {
-    num_tags = 2;
+	int i=0;
+	int *pint, *pintmore;
+	float *pfloat;
+
+    num_tags = 4;
 
     tags = (tag_data *)calloc(num_tags, sizeof(tag_data));
 
@@ -20,6 +24,10 @@ void init_tags()
     tags[0].elem_count = 10;
     tags[0].elem_size = 4;
     tags[0].data = (uint8_t *)calloc(tags[0].elem_size, tags[0].elem_count);
+	pint =(int *) tags[0].data;
+	for(i=0; i<tags[0].elem_count; i++){
+		*(pint + i) = 100 + i;
+	}
 
     tags[1].name = "TestBigArray";
     tags[1].data_type[0] = 0xc4;
@@ -27,6 +35,29 @@ void init_tags()
     tags[1].elem_count = 1000;
     tags[1].elem_size = 4;
     tags[1].data = (uint8_t *)calloc(tags[1].elem_size, tags[1].elem_count);
+	pintmore = (int *)tags[1].data;
+	for(i=0; i<tags[1].elem_count; i++){
+		*(pintmore + i) = 100 + i;
+	}
+
+	tags[2].name = "TestREALArray";
+    tags[2].data_type[0] = 0xca;
+    tags[2].data_type[1] = 0x00;
+    tags[2].elem_count = 20;
+    tags[2].elem_size = 4;
+    tags[2].data = (uint8_t *)calloc(tags[2].elem_size, tags[2].elem_count);
+	pfloat = (float *)tags[2].data;
+	for(i=0; i<tags[2].elem_count; i++){
+		*(pfloat + i) =100 + i + i*0.01;
+	}
+
+	tags[3].name = "TestBOOL";
+    tags[3].data_type[0] = 0xc1;
+    tags[3].data_type[1] = 0x01;
+    tags[3].elem_count = 1;
+    tags[3].elem_size = 1;
+    tags[3].data = (uint8_t *)calloc(tags[3].elem_size, tags[3].elem_count);
+	*tags[3].data = 0x1 << 1;
 
 }
 

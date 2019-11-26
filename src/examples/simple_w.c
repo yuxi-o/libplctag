@@ -19,25 +19,22 @@
  ***************************************************************************/
 
 
-
 #include <stdio.h>
 #include "../lib/libplctag.h"
 #include "utils.h"
 
-#define TAG_PATH "protocol=ab_eip&gateway=127.0.0.1&path=1,0&cpu=LGX&elem_size=1&elem_count=1&debug=1&name=TestBOOL"
+
+#define TAG_PATH "protocol=ab-eip&gateway=127.0.0.1&path=1,5&cpu=LGX&elem_size=4&elem_count=200&name=TestBigArray&debug=1"
+#define ELEM_COUNT 200
+#define ELEM_SIZE 4
 #define DATA_TIMEOUT 5000
-
-/*
- * Read a boolean value and toggle it.
- */
-
 
 
 int main()
 {
     int32_t tag = 0;
     int rc;
-    int b;
+    int i, val;
 
     /* create the tag */
     tag = plc_tag_create(TAG_PATH, DATA_TIMEOUT);
@@ -45,53 +42,28 @@ int main()
     /* everything OK? */
     if(tag < 0) {
         fprintf(stderr,"ERROR %s: Could not create tag!\n", plc_tag_decode_error(tag));
-
         return 0;
     }
 
-    /* let the connect succeed we hope */
-    while(plc_tag_status(tag) == PLCTAG_STATUS_PENDING) {
-        util_sleep_ms(100);
-    }
-
-    if(plc_tag_status(tag) != PLCTAG_STATUS_OK) {
-        fprintf(stderr,"Error setting up tag internal state. Error %s\n", plc_tag_decode_error(plc_tag_status(tag)));
+    if((rc = plc_tag_status(tag)) != PLCTAG_STATUS_OK) {
+        fprintf(stderr,"Error setting up tag internal state. Error %s\n", plc_tag_decode_error(rc));
+        plc_tag_destroy(tag);
         return 0;
     }
 
-    /* get the data */
-    rc = plc_tag_read(tag, DATA_TIMEOUT);
-
-    if(rc != PLCTAG_STATUS_OK) {
-        fprintf(stderr,"ERROR: Unable to read the data! Got error code %d: %s\n",rc, plc_tag_decode_error(rc));
-        return 0;
+    /* now test a write */
+    for(i=0; i < ELEM_COUNT; i++) {
+		val = 888;
+        plc_tag_set_int32(tag,(i++*ELEM_SIZE),val);
+		i++;
     }
-
-    /* print out the data */
-    b = plc_tag_get_uint8(tag,0);
-    fprintf(stderr,"bool = %d\n", b);
-
-    plc_tag_set_uint8(tag, 0, (b ? 0 : 255));
 
     rc = plc_tag_write(tag, DATA_TIMEOUT);
-
     if(rc != PLCTAG_STATUS_OK) {
         fprintf(stderr,"ERROR: Unable to read the data! Got error code %d: %s\n",rc, plc_tag_decode_error(rc));
+        plc_tag_destroy(tag);
         return 0;
     }
-
-
-    /* get the data again*/
-    rc = plc_tag_read(tag, DATA_TIMEOUT);
-
-    if(rc != PLCTAG_STATUS_OK) {
-        fprintf(stderr,"ERROR: Unable to read the data! Got error code %d: %s\n",rc, plc_tag_decode_error(rc));
-        return 0;
-    }
-
-    /* print out the data */
-    b = plc_tag_get_uint8(tag,0);
-    fprintf(stderr,"bool = %d\n", b);
 
     /* we are done */
     plc_tag_destroy(tag);
